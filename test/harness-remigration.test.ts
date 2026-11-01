@@ -439,6 +439,20 @@ describe("移行し直しで L Harness 側の変更を壊さない", () => {
     expect(rows(live, "SELECT COUNT(*) AS c FROM tags WHERE name LIKE 'lstep2harness-renaming-%'")[0]).toEqual({ c: 0 });
   });
 
+  it("移行済みのタグを、既存の別のタグと同じ名前に変えると、そのタグを使い回し、仮の名前のタグを残さない", async () => {
+    const live = liveHarness();
+    live.database.db.prepare("INSERT INTO tags (id,name) VALUES ('harness-made-tag','L Harness で作ったタグ')").run();
+    const first = await planFrom(live, fixture());
+    await apply(live, first.outDir);
+    const renamed = fixture("2026-10-26T00:00:00.000Z");
+    renamed.data.tags[0].name = "L Harness で作ったタグ";
+    const second = await planFrom(live, renamed);
+    await expect(apply(live, second.outDir)).resolves.toMatchObject({ checked: expect.any(Number) });
+    expect(rows(live, "SELECT COUNT(*) AS c FROM tags WHERE name LIKE 'lstep2harness-renaming-%'")[0]).toEqual({ c: 0 });
+    expect(rows(live, "SELECT COUNT(*) AS c FROM friend_tags WHERE friend_id=? AND tag_id='harness-made-tag'", HANAKO_ID)[0]).toEqual({ c: 1 });
+    expect(rows(live, "SELECT name FROM tags WHERE id=?", harnessId("tag", ACCOUNT, 101))).toEqual([{ name: fixture().data.tags[0].name }]);
+  });
+
   it("移行元で定義が消えた対応ステータスのタグも、移行し直すと友だちから外れる", async () => {
     const live = liveHarness();
     const withStatuses = (statuses: Array<{ id: number; name: string }>, current: { id: number; name: string }) => (snapshotDir: string) => {

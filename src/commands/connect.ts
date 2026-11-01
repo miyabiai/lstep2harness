@@ -41,7 +41,7 @@ export interface ConnectDependencies {
   fetchImpl?: typeof fetch;
 }
 
-interface AccountRow { id: string; name: string; is_active: number; friends: number }
+interface AccountRow { id: string; name: string; channel_id?: string | null; is_active: number; friends: number }
 
 export async function runConnect(options: ConnectOptions, dependencies: ConnectDependencies = {}): Promise<ConnectSummary> {
   if (!dependencies.openDatabase) assertHarnessPlatform();
@@ -75,7 +75,8 @@ export async function runConnect(options: ConnectOptions, dependencies: ConnectD
   let accounts: AccountRow[];
   try {
     // 認証情報の列は読まない
-    accounts = await database.query<AccountRow>("SELECT a.id,a.name,a.is_active,(SELECT COUNT(*) FROM friends f WHERE f.line_account_id=a.id) AS friends FROM line_accounts a ORDER BY a.display_order, a.id");
+    // 認証情報の列（トークン・シークレット）は読まない。チャネル ID は秘密ではなく、URL の先の L Harness と同じ導入先かの照合に使う
+    accounts = await database.query<AccountRow>("SELECT a.id,a.name,a.channel_id,a.is_active,(SELECT COUNT(*) FROM friends f WHERE f.line_account_id=a.id) AS friends FROM line_accounts a ORDER BY a.display_order, a.id");
   } catch (error) {
     throw new Error(`L Harness のデータベースを読めませんでした。L Harness と同じ Cloudflare アカウントに wrangler でログインしているか（npx wrangler@${WRANGLER_VERSION} login）、D1 の名前を確認してください。\n${(error as Error).message}`);
   }
@@ -96,8 +97,11 @@ export async function runConnect(options: ConnectOptions, dependencies: ConnectD
     else {
       try {
         const listed = await new HarnessApi(connection.harness_url, env.HARNESS_API_KEY, dependencies.fetchImpl).lineAccounts();
-        // URL の先の L Harness に、D1 で選んだ移行先アカウントが無ければ、URL とデータベースが別の導入先を指している
-        apiKey = listed.some((account) => account.id === chosen.id) ? "ok" : "mismatch";
+        // URL の先の L Harness に、D1 で選んだ移行先アカウントが無ければ、URL とデータベースが別の導入先を指している。
+        // 同じ ID があっても LINE のチャネル ID が違えば（複製した別の導入先など）同じく別物
+        const same = listed.find((account) => account.id === chosen.id);
+        const channelMatches = !same?.channelId || !chosen.channel_id || same.channelId === chosen.channel_id;
+        apiKey = same && channelMatches ? "ok" : "mismatch";
       } catch (error) {
         apiKey = error instanceof HarnessApiError && [401, 403].includes(error.status) ? "rejected" : "unreachable";
       }

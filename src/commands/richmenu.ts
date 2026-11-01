@@ -39,7 +39,8 @@ export function isLstepTrackingUrl(uri: string): boolean {
 export async function runRichMenu(api: HarnessApi, lineAccountId: string, options: { dryRun?: boolean; only?: string[] } = {}): Promise<RichMenuResult> {
   const account = encodeURIComponent(lineAccountId);
   const ext = await api.request<{ lineMenus?: LineMenu[] }>("GET", `/api/rich-menu-groups/external?accountId=${account}`);
-  const lineMenus = ext.lineMenus ?? [];
+  if (!Array.isArray(ext.lineMenus)) throw new Error("L Harness のリッチメニュー一覧の応答の形が想定と違います（lineMenus がありません）。L Harness の版を確認してください。0件とは扱いません");
+  const lineMenus = ext.lineMenus;
   const only = new Set(options.only ?? []);
   const result: RichMenuResult = { step: "richmenu", dryRun: Boolean(options.dryRun), onLine: lineMenus.length, menus: [] };
   for (const menu of lineMenus) {

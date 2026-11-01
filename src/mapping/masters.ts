@@ -55,11 +55,20 @@ export function mapTags(store: SnapshotStore, ctx: PlanContext): void {
   const tagName = (t: SourceTag): string => (t.name ?? "").trim() || `タグ${t.id}`;
   // この計画で名前を変える既存タグ（前にこのツールが入れた同じ ID のタグ）。その古い名前を、別のタグの「同名の既存タグ」として使い回さない
   const existingNameById = new Map([...ctx.existingTags].map(([name, id]) => [id, name]));
-  const renamed = new Set<string>();
+  const candidates = new Set<string>();
   for (const t of tags) {
     const id = ctx.id("tag", t.id);
     const old = existingNameById.get(id);
-    if (old !== undefined && old !== tagName(t)) renamed.add(id);
+    if (old !== undefined && old !== tagName(t)) candidates.add(id);
+  }
+  // 新しい名前が「別の既存タグの名前」で、そのタグが改名されないなら、このタグは既存タグを使い回す（自分のタグは触らない）ので退避しない
+  const renamed = new Set<string>();
+  for (const t of tags) {
+    const id = ctx.id("tag", t.id);
+    if (!candidates.has(id)) continue;
+    const takenBy = ctx.existingTags.get(tagName(t));
+    const reuses = Boolean(takenBy) && takenBy !== id && !candidates.has(takenBy!) && ctx.options.reuse_existing_tags;
+    if (!reuses) renamed.add(id);
   }
   // 名前は UNIQUE なので、名前を変える既存タグはいったん仮の名前に退避してから入れ直す（A→B・B→C の入れ替えでも重ならない）。
   // tags の文はまとめて同じファイルに入れる（退避だけ流れて止まった状態を残さない）

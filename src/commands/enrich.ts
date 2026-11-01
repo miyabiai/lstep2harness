@@ -45,9 +45,10 @@ export async function runEnrich(
   for (let round = 0; round < maxRounds; round++) {
     const url = `${base}/api/admin/refresh-profiles?offset=${offset}&limit=${batch}&accountId=${encodeURIComponent(connection.line_account_id)}`;
     const res = await fetchImpl(url, { method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(120_000) });
-    const json = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; data?: RefreshProfilesResult } & RefreshProfilesResult;
-    const d: RefreshProfilesResult = json.data ?? json;
-    if (!res.ok || json.success === false) throw new Error(`L Harness の refresh-profiles が失敗しました (HTTP ${res.status}${typeof json.error === "string" ? `: ${json.error.slice(0, 200)}` : ""})`);
+    const json = (await res.json().catch(() => null)) as ({ success?: boolean; error?: string; data?: RefreshProfilesResult } & RefreshProfilesResult) | null;
+    if (!res.ok || json?.success === false) throw new Error(`L Harness の refresh-profiles が失敗しました (HTTP ${res.status}${typeof json?.error === "string" ? `: ${json.error.slice(0, 200)}` : ""})`);
+    const d: RefreshProfilesResult | undefined = json?.data ?? json ?? undefined;
+    if (!d || typeof d.processed !== "number") throw new Error("L Harness の refresh-profiles の応答が JSON の結果ではありません（HTML のページなど）。URL が L Harness の Worker か確認してください。0人とは扱いません");
     updated += d.updated ?? 0;
     notFound += d.notFound ?? 0;
     errors += d.otherErrors ?? 0;

@@ -47,10 +47,16 @@ export class HarnessApi {
       signal: AbortSignal.timeout(timeoutMs),
     });
     let json: { success?: boolean; data?: T; error?: string } & Record<string, unknown> = {};
+    let parsed = false;
     try {
       json = (await res.json()) as typeof json;
+      parsed = json !== null && typeof json === "object";
     } catch {
-      /* 本文なし */
+      /* JSON ではない（HTML のログイン画面・エラーページなど） */
+    }
+    if (res.ok && !parsed) {
+      // 200 でも JSON でなければ「0件」などと読まず、つなぎ先の間違いとして止める
+      throw new HarnessApiError(`L Harness API ${method} ${path.split("?")[0]} の応答が JSON ではありません。URL が L Harness の Worker か（管理画面のページや別のサイトではないか）確認してください`, res.status);
     }
     if (!res.ok || json.success === false) {
       // API の返す文は短く切る（L Harness の版によって詳細が入ることがあるため）

@@ -185,6 +185,9 @@ describe("connect", () => {
     expect(saved.d1_database_id).toBeUndefined();
     expect(saved.cloudflare_account_id).toBeUndefined();
     expect(saved.harness_worker_dir).toBeUndefined();
+    // 同じアカウント ID でも LINE のチャネル ID が違えば別の導入先
+    const otherChannel = { openDatabase: () => database, fetchImpl: async () => jsonResponse(200, { success: true, data: [{ id: "acc-1", channelId: "another-channel", name: "本店", isActive: true }] }) };
+    expect((await runConnect({ cwd, d1: "other-d1", harnessUrl: "https://other.example.workers.dev", env: { HARNESS_API_KEY: "k" } }, otherChannel)).apiKey).toBe("mismatch");
     // 導入フォルダに Worker の URL が無いまま --harness-url を指定したときも、導入フォルダの値は使わない
     writeFileSync(join(cwd, ".line-harness-config.json"), JSON.stringify({ workerName: "installed", d1DatabaseName: "installed-d1", d1DatabaseId: "11111111-1111-1111-1111-111111111111", accountId: "0123456789abcdef0123456789abcdef" }));
     await runConnect({ cwd, harnessUrl: "https://other.example.workers.dev", env: {} }, { openDatabase: () => database });
@@ -238,6 +241,9 @@ describe("enrich", () => {
     await expect(runEnrich({ harness_url: "http://h.example.workers.dev", line_account_id: "a" }, "key")).rejects.toThrow(/https/);
     expect(() => new HarnessApi("http://h.example.workers.dev", "key")).toThrow(/https/);
     expect(new HarnessApi("http://127.0.0.1:8787", "key").baseUrl).toBe("http://127.0.0.1:8787");
+    // 200 でも JSON でない応答（HTML のページなど）は「0件」と読まずに止める
+    const html = new HarnessApi("https://h.example.workers.dev", "key", async () => new Response("<!doctype html><html>login</html>", { status: 200, headers: { "Content-Type": "text/html" } }));
+    await expect(html.lineAccounts()).rejects.toThrow(/JSON ではありません/);
   });
 });
 
