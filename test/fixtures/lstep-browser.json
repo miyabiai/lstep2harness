@@ -1,0 +1,179 @@
+{
+  "format": "lstep-browser-v1",
+  "account": { "id": "fictional-lstep-source", "label": "架空の移行テスト専用" },
+  "exportedAt": "2026-10-25T00:00:00.000Z",
+  "data": {
+    "friends": [
+      {
+        "id": 1001,
+        "uid": "U11111111111111111111111111111111",
+        "name": "架空花子🌸 \"A'\"\n二行目",
+        "isBlocked": false,
+        "createdAt": "2026-10-24T00:00:00.000Z",
+        "tags": [{ "id": 101, "name": "資料請求'済み📩" }, { "id": 103, "name": "回答済み✅" }],
+        "fields": [
+          { "id": 201, "name": "相談'内容📩", "value": "製造業 \"A社\" / 'B店'\n架空県🌾" },
+          { "id": 202, "name": "ポイント", "value": 0 },
+          { "id": 203, "name": "生年月日", "value": "1990-01-02" },
+          { "id": 204, "name": "好きな季節", "value": ["春🌸", "秋🍁"] },
+          { "id": 205, "name": "同意確認", "value": false }
+        ],
+        "scenarios": [{ "id": 301, "name": "二段階の案内📩", "status": "following", "started_at": "2026-10-24T00:00:00.000Z" }],
+        "timeline": {
+          "complete": true,
+          "messages": [
+            { "message_id": 401, "sender": "bot", "message_type": "text", "content": "ご登録ありがとうございます🌸\n\"移行テスト\"のご案内です。", "sent_at": "2026-10-24T00:00:00.000Z" },
+            { "message_id": 402, "sender": "friend", "message_type": "text", "content": "こんにちは😊\n'A社'について相談です。", "sent_at": "2026-10-24T00:01:00.000Z" },
+            { "message_id": 403, "sender": "bot", "message_type": "text", "content": "承りました。\"ご相談\"ありがとうございます📩", "sent_at": "2026-10-24T00:02:00.000Z" }
+          ]
+        }
+      },
+      {
+        "id": 1002,
+        "uid": "U22222222222222222222222222222222",
+        "name": "架空太郎🍁",
+        "isBlocked": true,
+        "createdAt": "2026-10-01T03:00:00.000Z",
+        "tags": [{ "id": 102, "name": "停止・除外" }],
+        "fields": [
+          { "id": 201, "name": "相談'内容📩", "value": "引用符 ' と \" と改行\n確認🍁" },
+          { "id": 202, "name": "ポイント", "value": 42 },
+          { "id": 206, "name": "メール", "value": "taro@example.invalid" },
+          { "id": 207, "name": "備考", "value": "1行目\n2行目\n3行目📒" }
+        ],
+        "scenarios": [{ "id": 301, "name": "二段階の案内📩", "status": "completed", "started_at": "2026-10-01T03:00:00.000Z" }],
+        "timeline": {
+          "complete": true,
+          "messages": [
+            { "message_id": 404, "sender": "friend", "message_type": "text", "content": "フォームに回答しました🍁", "sent_at": "2026-10-01T03:10:00.000Z" },
+            { "message_id": 405, "sender": "bot", "message_type": "text", "content": "確認しました。ありがとうございます😊", "sent_at": "2026-10-01T03:11:00.000Z" }
+          ]
+        }
+      }
+    ],
+    "tags": [
+      { "id": 101, "name": "資料請求'済み📩", "friend_count": 1 },
+      { "id": 102, "name": "停止・除外", "friend_count": 1 },
+      { "id": 103, "name": "回答済み✅", "friend_count": 1 }
+    ],
+    "fields": [
+      { "id": 201, "title": "相談'内容📩", "type": "TEXT" },
+      { "id": 202, "title": "ポイント", "type": "POINT" },
+      { "id": 203, "title": "生年月日", "type": "DATE" },
+      { "id": 204, "title": "好きな季節", "type": "SELECT", "options": [{ "label": "春🌸" }, { "label": "秋🍁" }] },
+      { "id": 205, "title": "同意確認", "type": "BOOLEAN" },
+      { "id": 206, "title": "メール", "type": "TEXT" },
+      { "id": 207, "title": "備考", "type": "TEXT" }
+    ],
+    "templates": [
+      { "id": 501, "name": "最初の案内🌸", "type": "text", "content": "ご登録ありがとうございます🌸\n\"移行テスト\"のご案内です。", "updated_at": "2026-10-24T00:00:00.000Z" },
+      { "id": 502, "name": "翌日の案内📩", "type": "text", "content": "翌日の確認です📩\n回答をお願いします。", "updated_at": "2026-10-24T00:00:00.000Z" }
+    ],
+    "scenarios": [
+      {
+        "id": 301,
+        "name": "二段階の案内📩",
+        "created_at": "2026-10-01T00:00:00.000Z",
+        "steps": [
+          {
+            "id": 3001, "order_number": 1, "delay_type": "immediate",
+            "templates": [{ "id": 501, "type": "text", "content": "ご登録ありがとうございます🌸\n\"移行テスト\"のご案内です。" }],
+            "actions": [{ "id": 8001, "type": "tag", "data": { "ids": [101], "action": 1 } }]
+          },
+          {
+            "id": 3002, "order_number": 2, "delay_type": "date_based", "start_day": 1, "start_time": "09:00:00",
+            "templates": [{ "id": 502, "type": "text", "content": "翌日の確認です📩\n回答をお願いします。" }],
+            "actions": [{ "id": 8002, "type": "tag", "data": { "ids": [103], "action": 1 } }]
+          }
+        ]
+      }
+    ],
+    "forms": [
+      {
+        "id": 601,
+        "name": "多項目アンケート（架空）",
+        "title": "お試し相談🌸 \"移行'確認\"",
+        "description": "<p>架空の回答だけで移行を確認します。</p>",
+        "count_user_reply": 2,
+        "created_at": "2026-10-01T00:00:00.000Z",
+        "actions_on_reply": [{ "id": 8003, "type": "tag", "data": { "ids": [103], "action": 1 } }],
+        "pages": [
+          {
+            "page_id": 1,
+            "fields": [
+              { "id": 611, "type": "text", "title": "お名前", "position": 1, "rules": { "required": true }, "placeholder": "架空花子", "settings": {} },
+              { "id": 612, "type": "textarea", "title": "相談内容📩", "position": 2, "rules": { "required": false }, "settings": {} },
+              { "id": 613, "type": "select", "title": "希望コース", "position": 3, "rules": { "required": true }, "settings": { "items": [{ "label": "はじめて🌱", "value": "はじめて🌱" }, { "label": "継続🍀", "value": "継続🍀" }] } },
+              { "id": 614, "type": "radio", "title": "連絡方法", "position": 4, "rules": { "required": true }, "settings": { "items": [{ "label": "メール📧", "value": "メール📧" }, { "label": "LINE", "value": "LINE" }] } },
+              { "id": 615, "type": "checkbox", "title": "関心のあること", "position": 5, "rules": { "required": false }, "settings": { "multiple": true, "items": [{ "label": "文章✍️", "value": "文章✍️" }, { "label": "動画🎥", "value": "動画🎥" }, { "label": "仕組み⚙️", "value": "仕組み⚙️" }] } }
+            ]
+          },
+          {
+            "page_id": 2,
+            "fields": [
+              { "id": 616, "type": "date", "title": "相談希望日", "position": 1, "rules": { "required": true }, "settings": {} },
+              { "id": 617, "type": "email", "title": "メールアドレス", "position": 2, "rules": { "required": true }, "settings": {} },
+              { "id": 618, "type": "tel", "title": "電話番号", "position": 3, "rules": { "required": false }, "settings": {} },
+              { "id": 619, "type": "number", "title": "予算", "position": 4, "rules": { "required": false }, "settings": {} },
+              { "id": 620, "type": "file", "title": "参考資料", "position": 5, "rules": { "required": false }, "settings": {} }
+            ]
+          }
+        ]
+      }
+    ],
+    "formResponses": {
+      "601": [
+        {
+          "id": 7001, "memberId": 1001, "answeredAt": "2026-10-24T01:00:00.000Z",
+          "answers": [
+            { "name": "お名前", "type": "text", "value": "架空花子🌸 \"A'\"\n二行目" },
+            { "name": "相談内容📩", "type": "textarea", "value": "製造業 \"A社\" / 'B店'\n架空県🌾" },
+            { "name": "希望コース", "type": "select", "value": "はじめて🌱" },
+            { "name": "連絡方法", "type": "radio", "value": "メール📧" },
+            { "name": "関心のあること", "type": "checkbox", "value": ["文章✍️", "仕組み⚙️"] },
+            { "name": "相談希望日", "type": "date", "value": { "date": "2026/11/01", "time": "10:30" } },
+            { "name": "メールアドレス", "type": "email", "value": "hanako@example.invalid" },
+            { "name": "電話番号", "type": "tel", "value": "000-0000-0000" },
+            { "name": "予算", "type": "number", "value": 0 },
+            { "name": "参考資料", "type": "file", "value": "https://example.invalid/fictional-attachment.pdf" }
+          ]
+        },
+        {
+          "id": 7002, "memberId": 1002, "answeredAt": "2026-10-01T03:09:00.000Z",
+          "answers": [
+            { "name": "お名前", "type": "text", "value": "架空太郎🍁" },
+            { "name": "相談内容📩", "type": "textarea", "value": "引用符 ' と \" と改行\n確認🍁" },
+            { "name": "希望コース", "type": "select", "value": "継続🍀" },
+            { "name": "連絡方法", "type": "radio", "value": "LINE" },
+            { "name": "関心のあること", "type": "checkbox", "value": [] },
+            { "name": "相談希望日", "type": "date", "value": { "date": "2026/11/02" } },
+            { "name": "メールアドレス", "type": "email", "value": "taro@example.invalid" },
+            { "name": "電話番号", "type": "tel", "value": "" },
+            { "name": "予算", "type": "number", "value": 12000 },
+            { "name": "参考資料", "type": "file", "value": "" }
+          ]
+        }
+      ]
+    }
+  },
+  "coverage": {
+    "friends": { "status": "complete", "count": 2 },
+    "friendTags": { "status": "complete", "count": 3 },
+    "friendFields": { "status": "complete", "count": 9 },
+    "friendScenarios": { "status": "complete", "count": 2 },
+    "conversations": { "status": "complete", "count": 5 },
+    "tags": { "status": "complete", "count": 3 },
+    "fields": { "status": "complete", "count": 7 },
+    "templates": { "status": "complete", "count": 2 },
+    "scenarios": { "status": "complete", "count": 1 },
+    "scenarioActions": { "status": "complete", "count": 2 },
+    "forms": { "status": "complete", "count": 1 },
+    "formResponses": { "status": "complete", "count": 2 },
+    "formBehavior": { "status": "partial", "count": 1, "note": "ファイル入力と送信後動作は要確認" },
+    "handlingStatuses": { "status": "unsupported", "count": 0 },
+    "autoReplies": { "status": "unsupported", "count": 0 },
+    "welcomeMessages": { "status": "unsupported", "count": 0 },
+    "richMenus": { "status": "unsupported", "count": 0 },
+    "trafficSources": { "status": "unsupported", "count": 0 }
+  }
+}

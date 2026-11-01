@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Lstep → L Harness 操作の案内</title>
+  <style>
+    :root { font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif; color: #21312b; background: #f4f7f5; line-height: 1.75; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    a { color: #166141; text-underline-offset: 3px; }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    a:focus-visible, button:focus-visible { outline: 3px solid #df941f; outline-offset: 4px; }
+    header { background: #153c2d; color: #fff; padding: 32px max(24px, calc((100vw - 1160px) / 2)); }
+    header p { margin: 0; opacity: .85; }
+    h1 { font-size: clamp(24px, 3.2vw, 36px); line-height: 1.5; margin: 0 0 8px; }
+    .layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 30px; max-width: 1208px; padding: 30px 24px 60px; margin: auto; }
+    nav { align-self: start; position: sticky; top: 20px; }
+    nav h2 { font-size: 16px; margin: 0 0 12px; }
+    nav ol { list-style: none; margin: 0; padding: 0; }
+    nav a { display: flex; gap: 10px; align-items: baseline; text-decoration: none; padding: 11px 12px; margin-bottom: 5px; border-radius: 8px; font-size: 14px; line-height: 1.6; }
+    nav a[aria-current="page"] { background: #dcebe2; color: #123c27; font-weight: 700; }
+    nav .number { color: #61786a; font-variant-numeric: tabular-nums; }
+    main { min-width: 0; }
+    .chapter { background: #fff; border: 1px solid #dce5df; border-radius: 16px; overflow: hidden; }
+    .copy { padding: 24px 28px; }
+    .eyebrow { font-size: 13px; color: #547160; margin: 0 0 6px; }
+    h2 { font-size: clamp(21px, 2.7vw, 28px); line-height: 1.55; margin: 0 0 12px; }
+    h3 { font-size: 17px; margin: 0 0 12px; }
+    p { margin: 0 0 14px; }
+    .media { background: #edf2ee; border-block: 1px solid #dce5df; }
+    video { display: block; width: 100%; max-height: 70vh; object-fit: contain; background: #17251e; }
+    .pending { padding: 46px 28px; min-height: 220px; display: flex; flex-direction: column; justify-content: center; text-align: center; }
+    .pending strong { font-size: 19px; }
+    .pending p { margin: 8px 0 0; color: #59705f; }
+    .steps { margin: 0; padding-left: 24px; }
+    .steps li { padding: 0 0 12px 5px; }
+    .meta { font-size: 12px; color: #627468; margin: 12px 0 0; }
+    .coverage { background: #fff8e9; border-left: 3px solid #c79436; padding: 12px 15px; margin: 16px 0 0; font-size: 13px; color: #6e5525; }
+    .fields { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 24px; }
+    .fields caption { text-align: left; font-size: 17px; font-weight: 700; margin-bottom: 12px; }
+    .fields th, .fields td { border-bottom: 1px solid #dce5df; text-align: left; vertical-align: top; padding: 8px 10px; }
+    .fields code { overflow-wrap: anywhere; font-size: 12px; }
+    .privacy { border-left: 3px solid #96b3a0; padding: 0 0 0 14px; font-size: 13px; color: #506557; margin-top: 20px; }
+    .pagination { display: flex; justify-content: space-between; gap: 16px; margin: 20px 0; font-size: 14px; }
+    .pagination a { padding: 10px 0; }
+    .pagination .next { margin-left: auto; }
+    footer { font-size: 12px; color: #66766b; }
+    [hidden] { display: none !important; }
+    @media (max-width: 760px) {
+      header { padding: 25px 20px; }
+      .layout { display: block; padding: 20px 16px 40px; }
+      nav { position: static; margin-bottom: 22px; }
+      nav ol { display: flex; gap: 5px; overflow-x: auto; padding: 3px 1px 8px; }
+      nav li { flex: 0 0 210px; }
+      nav a { height: 100%; margin: 0; border: 1px solid #dce5df; }
+      .copy { padding: 21px 20px; }
+      .pending { padding: 30px 20px; min-height: 185px; }
+    }
+  </style>
+</head>
+<body>
+  <header><h1>Lstep → L Harness 操作の案内</h1><p>人が操作するところを、必要な章から確認できます。</p></header>
+  <div class="layout">
+    <nav aria-label="操作の章"><h2>操作する内容</h2><ol id="chapters"></ol></nav>
+    <main id="main">
+      <article class="chapter" aria-labelledby="chapter-title">
+        <div class="copy"><p class="eyebrow" id="when"></p><h2 id="chapter-title"></h2><p id="purpose"></p><p class="coverage" id="coverage-note"></p></div>
+        <div class="media" id="media" aria-live="polite"></div>
+        <div class="copy"><p class="meta">縦長の操作画面は、動画の「全画面表示」で拡大できます。</p><p id="sample-template" hidden><a id="sample-link" download>LINE 接続情報の空欄の見本を開く</a>（実際の値は含みません）</p><table class="fields" id="field-mapping" hidden><caption>画面の値と保存する欄</caption><thead><tr><th scope="col">画面の項目</th><th scope="col">保存する欄</th></tr></thead><tbody id="field-rows"></tbody></table><h3>確認すること</h3><ol class="steps" id="steps"></ol><p class="meta" id="recorded-at" hidden></p></div>
+      </article>
+      <div class="pagination"><a id="previous" hidden></a><a id="next" class="next" hidden></a></div>
+      <p class="privacy">動画のアカウント名・ID・秘密の値は隠しています。実際には、ご自身の画面で正しいアカウントを選び、値を保存してください。ログイン情報・支払情報はご自身で入力します。</p>
+      <footer><a href="../../README.md">README に戻る</a> · <a href="README.md">動画の収録状況</a> · <a href="RECORDING.md">収録・公開前確認の方針</a></footer>
+      <noscript><p>章の切り替えには JavaScript が必要です。<a href="README.md">動画の一覧</a>から確認してください。</p></noscript>
+    </main>
+  </div>
+  <script src="chapters.js"></script>
+  <script>
+    "use strict";
+    const chapters = window.LSTEP_TUTORIAL_CHAPTERS;
+    const nav = document.getElementById("chapters");
+    for (const [index, chapter] of chapters.entries()) {
+      const li = document.createElement("li");
+      const a = document.createElement("a");
+      a.href = "#" + chapter.id;
+      const number = document.createElement("span");
+      number.className = "number";
+      number.textContent = String(index + 1).padStart(2, "0");
+      const title = document.createElement("span");
+      title.textContent = chapter.title;
+      a.append(number, title);
+      li.append(a);
+      nav.append(li);
+    }
+    function unavailable(message) {
+      const box = document.createElement("div");
+      box.className = "pending";
+      const heading = document.createElement("strong");
+      heading.textContent = message;
+      const detail = document.createElement("p");
+      detail.textContent = "下の手順を確認してください。";
+      box.append(heading, detail);
+      return box;
+    }
+    function render() {
+      const id = location.hash.slice(1);
+      const index = Math.max(0, chapters.findIndex(chapter => chapter.id === id));
+      const chapter = chapters[index];
+      for (const a of nav.querySelectorAll("a")) {
+        if (a.hash === "#" + chapter.id) a.setAttribute("aria-current", "page");
+        else a.removeAttribute("aria-current");
+      }
+      document.title = chapter.title + " | Lstep → L Harness";
+      document.getElementById("when").textContent = chapter.when;
+      document.getElementById("chapter-title").textContent = chapter.title;
+      document.getElementById("purpose").textContent = chapter.purpose;
+      const coverage = document.getElementById("coverage-note");
+      coverage.textContent = chapter.coverageNote || "";
+      coverage.hidden = !chapter.coverageNote;
+      const media = document.getElementById("media");
+      media.replaceChildren();
+      if (chapter.reviewed === true) {
+        const video = document.createElement("video");
+        video.controls = true;
+        video.playsInline = true;
+        video.preload = "metadata";
+        video.setAttribute("aria-label", chapter.title + "の操作動画");
+        video.src = chapter.file;
+        if (chapter.captions) {
+          const track = document.createElement("track");
+          track.kind = "captions"; track.src = chapter.captions; track.srclang = "ja"; track.label = "日本語"; track.default = true;
+          video.append(track);
+        }
+        video.addEventListener("error", () => media.replaceChildren(unavailable("動画ファイルを開けませんでした")));
+        media.append(video);
+      } else media.append(unavailable("この章の動画は準備中です"));
+      const steps = document.getElementById("steps");
+      steps.replaceChildren();
+      for (const text of chapter.steps) { const li = document.createElement("li"); li.textContent = text; steps.append(li); }
+      const sample = document.getElementById("sample-template");
+      sample.hidden = !chapter.sampleFile;
+      const sampleLink = document.getElementById("sample-link");
+      if (chapter.sampleFile) sampleLink.href = chapter.sampleFile;
+      else sampleLink.removeAttribute("href");
+      const mapping = document.getElementById("field-mapping");
+      const fieldRows = document.getElementById("field-rows");
+      fieldRows.replaceChildren();
+      mapping.hidden = !chapter.fields?.length;
+      for (const field of chapter.fields || []) {
+        const tr = document.createElement("tr");
+        const label = document.createElement("td"); label.textContent = field.label;
+        const value = document.createElement("td");
+        const code = document.createElement("code"); code.textContent = field.key;
+        value.append(code); tr.append(label, value); fieldRows.append(tr);
+      }
+      const recorded = document.getElementById("recorded-at");
+      recorded.hidden = !(chapter.reviewed === true && chapter.recordedAt);
+      recorded.textContent = chapter.recordedAt ? "画面の収録日: " + chapter.recordedAt + "（サービスの画面は変わることがあります）" : "";
+      for (const [elementId, targetIndex, label] of [["previous", index - 1, "← 前の章"], ["next", index + 1, "次の章 →"]]) {
+        const link = document.getElementById(elementId);
+        link.hidden = !chapters[targetIndex];
+        if (chapters[targetIndex]) { link.href = "#" + chapters[targetIndex].id; link.textContent = label; }
+      }
+    }
+    window.addEventListener("hashchange", render);
+    render();
+  </script>
+</body>
+</html>

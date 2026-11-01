@@ -1,0 +1,17 @@
+{
+  "name": "lstep2harness-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lステップの Webhook転送を受けて L Harness へ流す Cloudflare Worker（並行運用ブリッジ）",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250101.0",
+    "typescript": "^5.7.0",
+    "wrangler": "4.150.0"
+  }
+}

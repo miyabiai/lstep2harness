@@ -1,0 +1,28 @@
+# lstep2harness-bridge の設定の見本。通常は `lstep2harness bridge` が wrangler.toml を作るので、手で書く必要はありません。
+name = "lstep2harness-bridge"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+workers_dev = true
+# account_id = "Cloudflare のアカウントID（L Harness と同じアカウント）"
+
+# L Harness へのサービス連携（必須。同じアカウントの Worker を workers.dev の URL で呼ぶとエラー1042で遮断される）
+[[services]]
+binding = "HARNESS"
+service = "L Harness の Worker 名"
+
+# 重複排除（webhookEventId）。無くても動くが、再送時に二重に届くことがある
+# [[kv_namespaces]]
+# binding = "DEDUP"
+# id = "ここに KV namespace id"
+
+[vars]
+# L Harness Worker の URL
+HARNESS_URL = "https://your-line-harness.workers.dev"
+# Lステップが先に使う replyToken を L Harness に渡さない。既定 "1"
+STRIP_REPLY_TOKEN = "1"
+# イベントの timestamp を受け付ける古さ（秒）。古い通信の使い回しを断る。既定 600、"0" で確かめない
+MAX_EVENT_AGE_SECONDS = "600"
+
+# 秘密は wrangler secret put で入れる（wrangler.toml に書かない）:
+#   LINE_CHANNEL_SECRET … LINE Messaging API のチャネルシークレット（署名の検証と付け直しに使う）
+#   PATH_TOKEN          … 受信パスの推測防止トークン（48桁の英数字）
