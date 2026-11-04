@@ -169,7 +169,7 @@ describe("LstepApiSource", () => {
     const fetchImpl = api((url) => {
       if (url.pathname.endsWith("/tags")) return page(tags);
       if (url.pathname.endsWith("/friend-infos")) return page(fields);
-      if (/\/friends(?:\/1)?$/.test(url.pathname)) {
+      if (url.pathname.endsWith("/friends")) {
         const tagIds = url.searchParams.getAll("include_tags[]").map(Number);
         const fieldIds = url.searchParams.getAll("include_friend_infos[]").map(Number);
         batches.push({ tagIds, fieldIds, path: url.pathname });
@@ -177,17 +177,168 @@ describe("LstepApiSource", () => {
           tags: tagIds.map((id) => ({ id, name: `タグ${id}`, client_secret: "SECRET_TAG" })),
           friend_infos: fieldIds.map((id) => ({ id, name: `項目${id}`, type: "string", value: `値${id}`, api_key: "SECRET_FIELD" })),
         });
-        return url.pathname.endsWith("/1") ? Response.json({ data: value }) : page([value]);
+        return page([value]);
       }
       return undefined;
     });
     const exported = await finish(source(fetchImpl).extract());
     expect(batches.map((batch) => [batch.tagIds.length, batch.fieldIds.length])).toEqual([[100, 100], [1, 100], [0, 1]]);
+    expect(batches.every(batch => batch.path === "/v2/api/friends")).toBe(true);
     expect(exported.resources.friends[0].detail?.tags).toHaveLength(101);
     expect(exported.resources.friends[0].detail?.friend_info).toHaveLength(201);
     expect(exported.coverage.friendInfoValues.status).toBe("complete");
     expect(JSON.stringify(exported)).not.toContain("SECRET");
   });
+
+  it.each(["missing", "duplicate", "unknown", "uid-mismatch", "group-changed", "failed-page"])(
+    "rejects an inconsistent additional friend attribute batch: %s", async (fault) => {
+      const tags = Array.from({ length: 101 }, (_, i) => ({ id: i + 1, name: `タグ${i + 1}` }));
+      const fetchImpl = api(url => {
+        if (url.pathname.endsWith("/tags")) return page(tags);
+        if (!url.pathname.endsWith("/friends")) return undefined;
+        const ids = url.searchParams.getAll("include_tags[]").map(Number);
+        const make = (id: number, extra = {}) => friend(id, { tags: ids.map(tagId => ({ id: tagId, name: `タグ${tagId}` })), ...extra });
+        if (!ids.includes(101)) return page([make(1), make(2)]);
+        if (fault === "missing") return page([make(1)]);
+        if (fault === "duplicate") return page([make(1), make(1), make(2)]);
+        if (fault === "unknown") return page([make(1), make(3)]);
+        if (fault === "uid-mismatch") return page([make(1, { uid: uid(3) }), make(2)]);
+        if (fault === "group-changed") return page([make(1, { is_line_group: true }), make(2)]);
+        return new Response("SECRET_ERROR", { status: 500 });
+      });
+      await expect(finish(source(fetchImpl, { maxRetries: 0 }).extract())).rejects.toThrow(LstepApiError);
+      expect(fetchImpl.mock.calls.some(([input]) => /\/friends\/\d+$/.test(new URL(String(input)).pathname))).toBe(false);
+    },
+  );
+
+  it("validates excluded groups in additional attribute batches too", async () => {
+    const tags = Array.from({ length: 101 }, (_, i) => ({ id: i + 1, name: `タグ${i + 1}` }));
+    const fetchImpl = api(url => {
+      if (url.pathname.endsWith("/tags")) return page(tags);
+      if (!url.pathname.endsWith("/friends")) return undefined;
+      const ids = url.searchParams.getAll("include_tags[]").map(Number);
+      const person = friend(1, { tags: ids.map(id => ({ id, name: `タグ${id}` })) });
+      return page(ids.includes(101) ? [person] : [person, friend(2, { uid: uid(2).replace(/^U/, "C"), is_line_group: true })]);
+    });
+    await expect(finish(source(fetchImpl).extract())).rejects.toThrow("取得漏れ");
+  });
+
+  it("dispatches interleaved global message pages while preserving every individual's state", async () => {
+    const groupUid = uid(3).replace(/^U/, "C");
+    const message = (id: number, friendId: number, extra: Record<string, unknown> = {}) => ({
+      id, friend_id: friendId, friend_uid: uid(friendId), direction: "inbound", is_unconfirmed: false,
+      content: { type: "text", text: `本文${id}` }, sent_at: `2026-10-24T0${id % 10}:00:00Z`, ...extra,
+    });
+    const fetchImpl = api(url => {
+      if (url.pathname.endsWith("/friends")) return page([friend(1), friend(2), friend(3, { uid: groupUid, is_line_group: true }), friend(4)]);
+      if (!url.pathname.endsWith("/messages")) return undefined;
+      expect(url.searchParams.has("friend_id")).toBe(false);
+      expect(url.searchParams.get("sort_order")).toBe("asc");
+      return url.searchParams.has("cursor")
+        ? page([message(14, 1, { direction: "outbound" }), message(15, 2, { content: { type: "image" }, timeline_text: "画像" }), message(16, 1, { is_unconfirmed: true })])
+        : page([message(10, 2), message(11, 1, { direction: "system" }), message(12, 3, { friend_uid: groupUid })], "global-next");
+    });
+    const exported = await finish(source(fetchImpl).extract());
+    const conversations = exported.resources.friends.map(f => f.conversation);
+    expect(conversations[0]?.messages.map(m => [m.message_id, m.sender, m.content])).toEqual([[14, "bot", "本文14"], [16, "friend", "本文16"]]);
+    expect(conversations[0]).toMatchObject({ confirm_status: "unread", complete: true, last_message_date: "2026-10-24T06:00:00Z" });
+    expect(conversations[1]?.messages.map(m => m.content)).toEqual(["本文10", "画像"]);
+    expect(conversations[1]).toMatchObject({ confirm_status: "read", complete: false, last_message_date: "2026-10-24T05:00:00Z" });
+    expect(conversations[2]).toMatchObject({ messages: [], complete: true });
+    expect(conversations[2]?.confirm_status).toBeUndefined();
+    expect(exported.coverage.conversations).toMatchObject({ status: "partial", count: 4 });
+    expect(exported.coverage.conversations.note).toContain("システム通知1件");
+    expect(exported.coverage.conversations.note).toContain("グループの会話1件");
+    expect(fetchImpl.mock.calls.filter(([input]) => new URL(String(input)).pathname.endsWith("/messages"))).toHaveLength(2);
+  });
+
+  it.each(["unknown-friend", "uid-mismatch", "invalid-direction"])("rejects inconsistent global messages: %s", async fault => {
+    const fetchImpl = api(url => {
+      if (url.pathname.endsWith("/friends")) return page([friend()]);
+      if (url.pathname.endsWith("/messages")) return page([{
+        id: 10, friend_id: fault === "unknown-friend" ? 2 : 1,
+        friend_uid: fault === "uid-mismatch" ? uid(2) : uid(),
+        direction: fault === "invalid-direction" ? "unknown" : "inbound",
+        content: { type: "text", text: "本文" }, sent_at: "2026-10-24T01:00:00Z",
+      }]);
+      return undefined;
+    });
+    await expect(finish(source(fetchImpl).extract())).rejects.toThrow(LstepApiError);
+  });
+
+  it("rejects cyclic global message pagination", async () => {
+    const fetchImpl = api(url => {
+      if (url.pathname.endsWith("/friends")) return page([friend()]);
+      if (url.pathname.endsWith("/messages")) return page([], "same-message-cursor");
+      return undefined;
+    });
+    await expect(finish(source(fetchImpl).extract())).rejects.toThrow("ループ");
+  });
+
+  it("honors cancellation during a later global message page", async () => {
+    const controller = new AbortController();
+    const fetchImpl = api(url => {
+      if (url.pathname.endsWith("/friends")) return page([friend()]);
+      if (url.pathname.endsWith("/messages")) {
+        if (url.searchParams.has("cursor")) { controller.abort(); return page([]); }
+        return page([], "next-message");
+      }
+      return undefined;
+    });
+    await expect(finish(source(fetchImpl, { signal: controller.signal }).extract())).rejects.toThrow("取得を中止しました");
+    expect(fetchImpl.mock.calls.filter(([input]) => new URL(String(input)).pathname.endsWith("/messages"))).toHaveLength(2);
+  });
+
+  it("retains 50,001 friends and messages with 102 tags and fields using page-level requests", async () => {
+    const total = 50_001;
+    const tags = Array.from({ length: 102 }, (_, i) => ({ id: i + 1, name: `タグ${i + 1}` }));
+    const fields = Array.from({ length: 102 }, (_, i) => ({ id: i + 1001, name: `項目${i + 1}`, type: "numeric" }));
+    const fetchImpl = api(url => {
+      if (url.pathname.endsWith("/tags")) return page(tags);
+      if (url.pathname.endsWith("/friend-infos")) return page(fields);
+      if (!url.pathname.endsWith("/friends") && !url.pathname.endsWith("/messages")) return undefined;
+      expect(url.searchParams.get("limit")).toBe("1000");
+      const offset = Number(url.searchParams.get("cursor") ?? 0);
+      const count = Math.min(1000, total - offset);
+      const next = offset + count < total ? String(offset + count) : null;
+      if (url.pathname.endsWith("/messages")) {
+        expect(url.searchParams.has("friend_id")).toBe(false);
+        return page(Array.from({ length: count }, (_, i) => {
+          const id = offset + i + 1;
+          return { id: id + 100_000, friend_id: id, friend_uid: uid(id), direction: "inbound", is_unconfirmed: id % 2 === 0,
+            content: { type: "text", text: `会話${id}` }, sent_at: "2026-10-24T01:00:00Z" };
+        }), next);
+      }
+      const tagIds = new Set(url.searchParams.getAll("include_tags[]").map(Number));
+      const fieldIds = new Set(url.searchParams.getAll("include_friend_infos[]").map(Number));
+      return page(Array.from({ length: count }, (_, i) => {
+        const id = offset + i + 1, tagId = (id - 1) % 102 + 1, fieldId = tagId + 1000;
+        return { id, uid: uid(id), name: `友だち${id}`, is_line_group: false, is_blocked: false,
+          tags: tagIds.has(tagId) ? [{ id: tagId, name: `タグ${tagId}` }] : [],
+          friend_infos: fieldIds.has(fieldId) ? [{ id: fieldId, name: `項目${fieldId}`, type: "numeric", value: id - 1 }] : [] };
+      }), next);
+    });
+    const exported = await finish(source(fetchImpl).extract());
+    expect(exported.resources.friends).toHaveLength(total);
+    expect(exported.coverage.friendTags).toEqual({ status: "complete", count: total });
+    expect(exported.coverage.friendInfoValues).toEqual({ status: "complete", count: total });
+    expect(exported.coverage.conversations).toMatchObject({ status: "complete", count: total });
+    let mismatches = 0;
+    for (const [index, f] of exported.resources.friends.entries()) {
+      const id = index + 1, tagId = index % 102 + 1;
+      if (f.row.lmessage_friend_id !== id || f.row.line_friend_id !== uid(id)
+        || f.detail?.tags.length !== 1 || f.detail.tags[0].tag_id !== tagId
+        || f.detail.friend_info.length !== 1 || f.detail.friend_info[0].id !== tagId + 1000 || f.detail.friend_info[0].value !== index
+        || f.conversation?.messages.length !== 1 || f.conversation.messages[0].message_id !== id + 100_000
+        || f.conversation.messages[0].content !== `会話${id}` || f.conversation.confirm_status !== (id % 2 === 0 ? "unread" : "read")) mismatches++;
+    }
+    expect(mismatches).toBe(0);
+    const urls = fetchImpl.mock.calls.map(([input]) => new URL(String(input)));
+    expect(urls.filter(url => url.pathname.endsWith("/friends"))).toHaveLength(102);
+    expect(urls.filter(url => url.pathname.endsWith("/messages"))).toHaveLength(51);
+    expect(urls.some(url => /\/friends\/\d+$/.test(url.pathname))).toBe(false);
+    expect(urls).toHaveLength(158);
+  }, 60_000);
 
   it("preserves selection labels and marks unknown value shapes partial", async () => {
     const fetchImpl = api((url) => {

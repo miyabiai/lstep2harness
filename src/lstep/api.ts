@@ -171,17 +171,21 @@ export class LstepApiSource {
 
     const tagIds = resources.tags.map((tag) => tag.id);
     const fieldIds = resources.fields.map((field) => field.id);
+    const friendIdentities = new Map<number, { uid: string; group: boolean }>();
     let skippedGroups = 0;
     let unsupportedValues = 0;
     resources.friends = await this.#pages("/friends", (value) => {
       const item = record(value);
       const id = identifier(item.id);
       const uid = stringValue(item.uid);
-      if (item.is_line_group === true || uid.startsWith("C")) {
+      if (friendIdentities.has(id)) throw new LstepApiError("API応答の友だちが重複しています。取得をやり直してください", 200);
+      const group = item.is_line_group === true || uid.startsWith("C");
+      if (!group && !/^U[0-9a-f]{32}$/i.test(uid)) throw new LstepApiError("API応答のLINEユーザーIDが不正です", 200);
+      friendIdentities.set(id, { uid, group });
+      if (group) {
         skippedGroups += 1;
         return null;
       }
-      if (!/^U[0-9a-f]{32}$/i.test(uid)) throw new LstepApiError("API応答のLINEユーザーIDが不正です", 200);
       const name = item.name == null ? null : stringValue(item.name);
       const snapshot: SourceFriendSnapshot = {
         row: {
@@ -213,23 +217,38 @@ export class LstepApiSource {
     })
       .then((friends) => friends.filter((friend): friend is SourceFriendSnapshot => friend !== null));
 
-    const friendIds = new Set<number>();
+    const friendsById = new Map<number, SourceFriendSnapshot>();
     const uids = new Set<string>();
     for (const friend of resources.friends) {
-      if (friendIds.has(friend.row.lmessage_friend_id) || uids.has(friend.row.line_friend_id)) {
+      if (uids.has(friend.row.line_friend_id)) {
         throw new LstepApiError("API応答の友だちが重複しています。取得をやり直してください", 200);
       }
-      friendIds.add(friend.row.lmessage_friend_id);
+      friendsById.set(friend.row.lmessage_friend_id, friend);
       uids.add(friend.row.line_friend_id);
-      for (let offset = 100; offset < Math.max(tagIds.length, fieldIds.length); offset += 100) {
-        const tagBatch = tagIds.slice(offset, offset + 100);
-        const fieldBatch = fieldIds.slice(offset, offset + 100);
-        const body = await this.#get(`/friends/${friend.row.lmessage_friend_id}`, inclusionQuery(tagBatch, fieldBatch));
-        const detail = record(body.data);
-        if (identifier(detail.id) !== friend.row.lmessage_friend_id || stringValue(detail.uid) !== friend.row.line_friend_id) {
-          throw new LstepApiError("友だちの詳細と一覧のIDが一致しません", 200);
+    }
+    // 追加属性も一覧をまとめて読む。1人ずつの詳細GETにすると友だち数に比例してAPI枠を消費する。
+    for (let offset = 100; offset < Math.max(tagIds.length, fieldIds.length); offset += 100) {
+      const tagBatch = tagIds.slice(offset, offset + 100);
+      const fieldBatch = fieldIds.slice(offset, offset + 100);
+      const seen = new Set<number>();
+      await this.#visitPages("/friends", (value) => {
+        const item = record(value);
+        const id = identifier(item.id);
+        const uid = stringValue(item.uid);
+        const original = friendIdentities.get(id);
+        if (!original || original.uid !== uid || original.group !== (item.is_line_group === true || uid.startsWith("C"))) {
+          throw new LstepApiError("友だちの追加属性と一覧のIDが一致しません", 200);
         }
-        unsupportedValues += this.#appendFriendValues(friend, detail, tagBatch, fieldBatch);
+        if (seen.has(id)) throw new LstepApiError("追加属性の友だちが重複しています", 200);
+        seen.add(id);
+        const friend = friendsById.get(id);
+        if (friend) unsupportedValues += this.#appendFriendValues(friend, item, tagBatch, fieldBatch);
+      }, {
+        ...inclusionQuery(tagBatch, fieldBatch),
+        display_status: ["normal", "block", "hide"], sort_order: "asc",
+      });
+      if (seen.size !== friendIdentities.size) {
+        throw new LstepApiError("友だちの追加属性に取得漏れがあります。再取得してください", 200);
       }
     }
     exported.coverage.friends = {
@@ -248,55 +267,65 @@ export class LstepApiSource {
     let incompleteConversations = 0;
     let messageCount = 0;
     let systemNotices = 0;
+    let skippedGroupMessages = 0;
+    const conversationStates = new Map<number, { incomplete: boolean; unconfirmed: boolean; unconfirmedSeen: boolean }>();
+    // 全体の会話をページ単位で振り分け、全メッセージの中間配列をもう1つ作らない。
+    await this.#visitPages("/messages", (value) => {
+      const item = record(value);
+      const friendId = identifier(item.friend_id);
+      const identity = friendIdentities.get(friendId);
+      if (!identity) throw new LstepApiError("友だち一覧にない会話があります。欠落を避けるため再取得してください", 200);
+      if (item.friend_uid != null && stringValue(item.friend_uid) !== identity.uid) {
+        throw new LstepApiError("会話と友だちのIDが一致しません", 200);
+      }
+      if (identity.group) { skippedGroupMessages += 1; return; }
+      const friend = friendsById.get(friendId)!;
+      let state = conversationStates.get(friendId);
+      if (!state) {
+        state = { incomplete: false, unconfirmed: false, unconfirmedSeen: false };
+        conversationStates.set(friendId, state);
+      }
+      if (typeof item.is_unconfirmed === "boolean") {
+        state.unconfirmedSeen = true;
+        if (item.is_unconfirmed && item.direction === "inbound") state.unconfirmed = true;
+      }
+      const direction = stringValue(item.direction);
+      if (!["inbound", "outbound", "system"].includes(direction)) {
+        throw new LstepApiError("API応答のメッセージ方向が不正です", 200);
+      }
+      // タグ付与などのシステム通知は顧客との会話ではないので移さない（画面取得と同じ扱い）
+      if (direction === "system") {
+        systemNotices += 1;
+        return;
+      }
+      const content = item.content == null ? {} : record(item.content);
+      const text = content.type === "text" ? optionalString(content.text) : undefined;
+      if (text === undefined) state.incomplete = true;
+      const timelineText = optionalString(item.timeline_text);
+      if (text === undefined && timelineText === undefined) return;
+      friend.conversation!.messages.push({
+        message_id: identifier(item.id), sender: direction === "inbound" ? "friend" : "bot",
+        message_type: optionalString(content.type) ?? direction,
+        content: text ?? timelineText,
+        sent_at: stringValue(item.sent_at),
+        source: { direction, content_available: text !== undefined },
+      } satisfies SourceMessage);
+      messageCount += 1;
+    }, { sort_order: "asc" });
     for (const friend of resources.friends) {
-      let incomplete = false;
-      let unconfirmed = false;
-      let unconfirmedSeen = false;
-      const messages = await this.#pages("/messages", (value) => {
-        const item = record(value);
-        if (typeof item.is_unconfirmed === "boolean") {
-          unconfirmedSeen = true;
-          if (item.is_unconfirmed && item.direction === "inbound") unconfirmed = true;
-        }
-        if (identifier(item.friend_id) !== friend.row.lmessage_friend_id
-          || (item.friend_uid != null && stringValue(item.friend_uid) !== friend.row.line_friend_id)) {
-          throw new LstepApiError("会話と友だちのIDが一致しません", 200);
-        }
-        const direction = stringValue(item.direction);
-        if (!["inbound", "outbound", "system"].includes(direction)) {
-          throw new LstepApiError("API応答のメッセージ方向が不正です", 200);
-        }
-        // タグ付与などのシステム通知は顧客との会話ではないので移さない（画面取得と同じ扱い）
-        if (direction === "system") {
-          systemNotices += 1;
-          return null;
-        }
-        const content = item.content == null ? {} : record(item.content);
-        const text = content.type === "text" ? optionalString(content.text) : undefined;
-        if (text === undefined) incomplete = true;
-        const timelineText = optionalString(item.timeline_text);
-        if (text === undefined && timelineText === undefined) return null;
-        return {
-          message_id: identifier(item.id), sender: direction === "inbound" ? "friend" : "bot",
-          message_type: optionalString(content.type) ?? direction,
-          content: text ?? timelineText,
-          sent_at: stringValue(item.sent_at),
-          source: { direction, content_available: text !== undefined },
-        } satisfies SourceMessage;
-      }, { friend_id: friend.row.lmessage_friend_id, sort_order: "asc" });
+      const state = conversationStates.get(friend.row.lmessage_friend_id);
       const conversation = friend.conversation!;
-      conversation.messages = messages.filter((message): message is NonNullable<typeof message> => message !== null);
       // 未確認（is_unconfirmed）の受信が1件でもあれば未読。項目が無ければ確認状態は不明のまま
-      if (unconfirmedSeen) conversation.confirm_status = unconfirmed ? "unread" : "read";
-      conversation.complete = !incomplete;
+      if (state?.unconfirmedSeen) conversation.confirm_status = state.unconfirmed ? "unread" : "read";
+      conversation.complete = !state?.incomplete;
       conversation.last_message_date = conversation.messages.at(-1)?.sent_at;
-      messageCount += conversation.messages.length;
-      if (incomplete) incompleteConversations += 1;
+      if (state?.incomplete) incompleteConversations += 1;
     }
     exported.coverage.conversations = {
       status: incompleteConversations ? "partial" : "complete", count: messageCount,
       note: "公式APIが返す履歴の全ページを取得。テキスト以外は表示用テキストのみの場合があります。"
-        + (systemNotices ? `システム通知${systemNotices}件は会話から除外しました。` : ""),
+        + (systemNotices ? `システム通知${systemNotices}件は会話から除外しました。` : "")
+        + (skippedGroupMessages ? `グループの会話${skippedGroupMessages}件は対象外です。` : ""),
     };
 
     let formResponseCount = 0;
@@ -396,12 +425,21 @@ export class LstepApiSource {
 
   async #pages<T>(path: string, mapper: (value: unknown) => T, query: Query = {}, limit = 1000): Promise<T[]> {
     const items: T[] = [];
+    await this.#visitPages(path, value => { items.push(mapper(value)); }, query, limit);
+    return items;
+  }
+
+  async #visitPages(path: string, visit: (value: unknown) => void, query: Query = {}, limit = 1000): Promise<void> {
     const seenCursors = new Set<string>();
     let cursor: string | undefined;
     for (let page = 0; page < 100_000; page += 1) {
       const body = await this.#get(path, { ...query, limit, cursor });
-      for (const value of list(body.data)) items.push(mapper(value));
-      if (body.next_cursor === null) return items;
+      for (const value of list(body.data)) {
+        this.#throwIfCancelled();
+        visit(value);
+      }
+      this.#throwIfCancelled();
+      if (body.next_cursor === null) return;
       if (typeof body.next_cursor !== "string" || !body.next_cursor) {
         throw new LstepApiError("API応答の次ページ情報が不正です。全件取得を確認できません", 200);
       }

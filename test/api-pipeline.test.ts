@@ -87,19 +87,22 @@ function officialApi() {
         }], "friend-second");
       }
       case "/v2/api/messages": {
-        const friendId = url.searchParams.get("friend_id");
-        if (friendId === "1002") return response(url, [{
-          id: 4003, friend_id: 1002, friend_uid: TARO_UID, direction: "inbound",
-          timeline_text: "別の相談です🍁", content: { type: "text", text: "別の相談です🍁" },
-          sent_at: "2026-10-22T01:00:00Z", is_unconfirmed: false,
-        }]);
-        expect(friendId).toBe("1001");
-        if (url.searchParams.get("cursor") === "message-second") return response(url, [{
-          id: 4002, friend_id: 1001, friend_uid: HANAKO_UID, direction: "outbound",
-          timeline_text: "承りました", content: { type: "text", text: "承りました。\"ご相談\"ありがとうございます📩" },
-          sent_at: "2026-10-21T01:05:00Z", is_unconfirmed: false,
-          staff: { id: 901, name: "架空スタッフ" }, sender_decoration: { display_name: "相談窓口" },
-        }]);
+        expect(url.searchParams.has("friend_id")).toBe(false);
+        expect(url.searchParams.get("sort_order")).toBe("asc");
+        expect(url.searchParams.get("limit")).toBe("1000");
+        if (url.searchParams.get("cursor") === "message-second") return response(url, [
+          {
+            id: 4002, friend_id: 1001, friend_uid: HANAKO_UID, direction: "outbound",
+            timeline_text: "承りました", content: { type: "text", text: "承りました。\"ご相談\"ありがとうございます📩" },
+            sent_at: "2026-10-21T01:05:00Z", is_unconfirmed: false,
+            staff: { id: 901, name: "架空スタッフ" }, sender_decoration: { display_name: "相談窓口" },
+          },
+          {
+            id: 4003, friend_id: 1002, friend_uid: TARO_UID, direction: "inbound",
+            timeline_text: "別の相談です🍁", content: { type: "text", text: "別の相談です🍁" },
+            sent_at: "2026-10-22T01:00:00Z", is_unconfirmed: false,
+          },
+        ]);
         return response(url, [{
           id: 4001, friend_id: 1001, friend_uid: HANAKO_UID, direction: "inbound",
           timeline_text: "こんにちは", content: { type: "text", text: "こんにちは😊\n'A社'について相談です。", api_token: "UNEXPECTED_SECRET_MESSAGE" },
@@ -237,7 +240,7 @@ describe("official API mock → source snapshot → plan → real L Harness SQLi
     expect(stored).not.toContain("fictional-source-api-token");
   });
 
-  it("migrates both message directions and every page with exact text", async () => {
+  it("migrates both message directions and every global page to the correct friends with exact text", async () => {
     const prepared = await prepare();
     apply(prepared);
     inspect(prepared, database => {
@@ -250,8 +253,11 @@ describe("official API mock → source snapshot → plan → real L Harness SQLi
       ]);
       expect(database.count("messages_log")).toBe(3);
     });
-    expect(prepared.fetchImpl.mock.calls.map(([input]) => new URL(String(input)))
-      .filter(url => url.pathname.endsWith("/messages") && url.searchParams.get("friend_id") === "1001")).toHaveLength(2);
+    const messageRequests = prepared.fetchImpl.mock.calls.map(([input]) => new URL(String(input)))
+      .filter(url => url.pathname.endsWith("/messages"));
+    expect(messageRequests).toHaveLength(2);
+    expect(messageRequests.every(url => !url.searchParams.has("friend_id"))).toBe(true);
+    expect(messageRequests.map(url => url.searchParams.get("cursor"))).toEqual([null, "message-second"]);
     expect(verifyLocal(prepared.outDir, prepared.dbPath).partial).toBe(true);
   });
 
