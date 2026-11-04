@@ -36,6 +36,8 @@ export interface BrowserStatus {
 export interface LoginBrowserSession {
   status(): Promise<BrowserStatus>;
   extract(account: { accountId: string; accountLabel?: string }): Promise<SourceExport>;
+  /** 公式APIで確認した数値IDだけを渡す。トークン・LINEユーザーIDは画面へ渡さない。 */
+  supplement?(account: { accountId: string; accountLabel?: string }, friendIds: number[]): Promise<unknown>;
   close(): Promise<void>;
 }
 
@@ -260,6 +262,42 @@ export async function createLoginBrowserSession(
   return {
     status,
     close,
+    supplement: async (account, friendIds) => {
+      if (!account.accountId.trim()) throw new Error("取得元アカウントの管理番号が必要です");
+      if (!friendIds.length || friendIds.some(value => !validId(value)) || new Set(friendIds).size !== friendIds.length) {
+        throw new Error("公式APIの友だちの管理番号を確認できません");
+      }
+      if (extracting) throw new Error("画面からの取得はすでに実行中です");
+      extracting = true;
+      try {
+        return await execute(async () => {
+          if ((await status()).state !== "ready") throw new Error("取得用ブラウザでLステップにログインしてください");
+          // 通常の一覧を実際に開き、APIで確認した友だちが同じ画面にいることを確かめる。
+          // accountId は利用者の記録用ラベルなので、この照合の代わりにはならない。
+          await navigate("/line/show?page=1");
+          const view = await rendered<FriendListView>(friendListScript, value => Array.isArray(value.friendIds)
+            && value.friendIds.length > 0 && (value.currentPage === undefined || value.currentPage === 1));
+          const expected = new Set(friendIds);
+          if (!Array.isArray(view.friendIds) || !view.friendIds.length
+            || view.currentPage !== undefined && view.currentPage !== 1
+            || new Set(view.friendIds).size !== view.friendIds.length
+            || view.friendIds.some(value => !validId(value) || !expected.has(value))) {
+            throw new Error("公式APIと管理画面の友だちが一致しません。同じアカウントでログインしてください");
+          }
+          const script = await readFile(new URL("../../browser/export.js", import.meta.url), "utf8");
+          await new Promise(resolve => setTimeout(resolve, Math.max(0, intervalMs - (Date.now() - lastNavigation))));
+          ensureOpen();
+          lastNavigation = Date.now();
+          const exportOptions = { accountId: account.accountId.trim(), accountLabel: account.accountLabel,
+            supplement: true, friendIds, visibleFriendIds: view.friendIds, identityFriendId: view.friendIds[0],
+            maxPages, maxFriends, intervalMs };
+          await driver.page.evaluate(`globalThis.LSTEP_EXPORT_OPTIONS = ${JSON.stringify(exportOptions)}; globalThis.LSTEP_EXPORT_CANCEL = false; globalThis.LSTEP_LAST_EXPORT = undefined;`);
+          return driver.page.evaluate<unknown>(script);
+        }, timeoutMs + Math.min(friendIds.length, maxFriends) * perFriendTimeoutMs);
+      } finally {
+        await close();
+      }
+    },
     extract: async account => {
       if (!account.accountId.trim()) throw new Error("取得元アカウントの管理番号が必要です");
       if (extracting) throw new Error("画面からの取得はすでに実行中です");

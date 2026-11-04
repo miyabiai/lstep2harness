@@ -337,7 +337,7 @@ export function mapScenarios(store: SnapshotStore, ctx: PlanContext): void {
     mapScenario(s, detail, ctx);
     r.migrated += 1;
   }
-  r.notes.push("配信トリガーはすべて「手動」で、停止状態で入れています（並行運用中の二重送信を防ぐため）。切替後に管理画面で有効化してください");
+  r.notes.push("配信トリガーはすべて「手動」で、停止状態で入れています（並行運用中の二重送信を防ぐため）。切替後に管理画面で配信方式・日時を確認・再設定してから有効化してください");
 }
 
 /** シナリオ 1 つ → scenarios 1 行 + scenario_steps。移したステップの並びを ctx.scenarioSteps に残す。 */

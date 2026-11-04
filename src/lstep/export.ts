@@ -14,7 +14,7 @@ export interface ResourceCoverage {
 export interface SourceExport {
   schemaVersion: 1;
   platform: "lstep";
-  route: "api" | "browser";
+  route: "api" | "browser" | "hybrid";
   account: { id: string; label?: string };
   exportedAt: string;
   idMappings?: {

@@ -3,6 +3,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { LstepApiError, LstepApiSource } from "../lstep/api.js";
 import type { SourceExport } from "../lstep/export.js";
+import { mergeHybridExport } from "../lstep/hybrid.js";
 import type { PlanManifest } from "../mapping/plan.js";
 import { createPlan, writeSourceSnapshot, type PlanTarget } from "../pipeline.js";
 import type { HarnessDatabase } from "../harness/database.js";
@@ -15,7 +16,7 @@ import { tutorialMessage } from "../guide.js";
  * 人がするのは、管理画面から取得する場合の Chrome でのログインだけ。結果は AI がチャットで伝える。
  */
 
-export type CollectRoute = "auto" | "api" | "browser";
+export type CollectRoute = "auto" | "api" | "browser" | "hybrid";
 
 export interface CollectOptions {
   route: CollectRoute;
@@ -40,7 +41,7 @@ export interface CollectDependencies {
 }
 
 export interface CollectSummary {
-  route: "api" | "browser";
+  route: "api" | "browser" | "hybrid";
   runDirectory: string;
   planDirectory: string;
   report: string;
@@ -108,11 +109,13 @@ async function collectWithApi(options: CollectOptions, dependencies: CollectDepe
     }
     throw new CollectError(`LステップAPIに接続できませんでした。設定を確認するか、管理画面から取る場合は --route browser で実行してください。ただし${BROWSER_UID_UNAVAILABLE}`);
   }
-  options.log?.("LステップAPIで取得しています（ブラウザは開きません）。");
+  options.log?.(options.route === "hybrid"
+    ? "LステップAPIで友だちの識別子と基本情報を取得しています。その後、Chrome で設定を補います。"
+    : "LステップAPIで取得しています（ブラウザは開きません）。");
   return api.extract();
 }
 
-async function collectWithBrowser(options: CollectOptions, dependencies: CollectDependencies, accountId: string): Promise<SourceExport> {
+async function collectWithBrowser(options: CollectOptions, dependencies: CollectDependencies, accountId: string, apiSource?: SourceExport): Promise<SourceExport> {
   const sleep = dependencies.sleep ?? abortableSleep;
   const browser = await (dependencies.createBrowser ?? (signal => createLoginBrowserSession({ signal })))(options.signal);
   try {
@@ -127,6 +130,12 @@ async function collectWithBrowser(options: CollectOptions, dependencies: Collect
       await sleep(2000, options.signal);
     }
     options.log?.("ログインを確認しました。取得しています（友だちの人数によって数分〜数十分かかります）。");
+    if (apiSource) {
+      if (!browser.supplement) throw new CollectError("管理画面の設定補完に対応していません。ツールを更新してください。");
+      const friendIds = apiSource.resources.friends.map(friend => friend.row.lmessage_friend_id);
+      const supplement = await browser.supplement({ accountId }, friendIds);
+      return mergeHybridExport(apiSource, supplement);
+    }
     return await browser.extract({ accountId });
   } finally {
     await browser.close();
@@ -145,7 +154,7 @@ function createRunDirectory(dataRoot: string): string {
   return directory;
 }
 
-function summarize(source: SourceExport, manifest: PlanManifest, route: "api" | "browser", runDirectory: string, planDirectory: string): CollectSummary {
+function summarize(source: SourceExport, manifest: PlanManifest, route: "api" | "browser" | "hybrid", runDirectory: string, planDirectory: string): CollectSummary {
   const resources = source.resources;
   return {
     route, runDirectory, planDirectory, report: join(planDirectory, "report.md"),
@@ -183,18 +192,28 @@ export async function collectAndPlan(options: CollectOptions, dependencies: Coll
   const account = "harness" in target ? await validateHarnessTarget(target) : (validateTarget(target), null);
   const accountId = options.sourceAccountId?.trim() || "lstep";
   const hasToken = Boolean(options.apiToken?.trim());
-  if (options.route === "api" && !hasToken) throw new CollectError(`LSTEP_API_TOKEN が設定されていません。管理画面から取る場合は --route browser で実行してください。ただし${BROWSER_UID_UNAVAILABLE}`);
+  if (["api", "hybrid"].includes(options.route) && !hasToken) throw new CollectError(`LSTEP_API_TOKEN が設定されていません。管理画面から取る場合は --route browser で実行してください。ただし${BROWSER_UID_UNAVAILABLE}`);
   if (options.route === "auto" && !hasToken) {
     throw new CollectError(`LSTEP_API_TOKEN が無いので公式 API では取得できません。管理画面から取得する場合は、提供元が公開していない画面内部の読み取り口を使うこと（Lステップの利用規約を確認のうえ自己責任で使うこと）を利用者に伝え、了解を得てから --route browser を付けて実行してください。ただし${BROWSER_UID_UNAVAILABLE}`);
   }
-  const route: "api" | "browser" = options.route === "browser" ? "browser" : "api";
+  const route: SourceExport["route"] = options.route === "browser" ? "browser" : options.route === "hybrid" ? "hybrid" : "api";
   if (route === "browser") {
     options.log?.(`${BROWSER_UID_UNAVAILABLE}ログイン後に1人分を確かめ、LINE ユーザーID が無ければ取得を止めます。`);
     options.log?.("管理画面からの取得は、提供元が公開していない画面内部の読み取り口を 1.1 秒以上の間隔で読みます（読み取りだけ）。Lステップの利用規約を確認のうえ、ご自身の責任で使ってください。公式 API（API 連携オプション）がある場合は LSTEP_API_TOKEN を設定すると、そちらを使います。");
   }
-  const source = route === "api"
-    ? await collectWithApi(options, dependencies, accountId)
-    : await collectWithBrowser(options, dependencies, accountId);
+  if (route === "hybrid") {
+    options.log?.("公式APIで取れない設定を、管理画面内部の読み取り口から補います（1.1秒以上の間隔、読み取りだけ）。利用規約を確認し、利用者の了解を得て使ってください。");
+  }
+  let source: SourceExport;
+  if (route === "browser") {
+    source = await collectWithBrowser(options, dependencies, accountId);
+  } else {
+    const apiSource = await collectWithApi(options, dependencies, accountId);
+    if (options.signal?.aborted) throw new CollectError("中止しました。");
+    source = route === "hybrid"
+      ? await collectWithBrowser(options, dependencies, accountId, apiSource)
+      : apiSource;
+  }
   if (options.signal?.aborted) throw new CollectError("中止しました。");
   const runDirectory = createRunDirectory(options.dataRoot);
   const snapshotDirectory = join(runDirectory, "snapshot");

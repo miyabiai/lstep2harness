@@ -67,12 +67,12 @@ program.command("migrate")
   .option("--line-account-id <id>", "試験用DBの移行先アカウントID（--db のとき）")
   .option("--harness", "connect で設定した本番の L Harness へ移す", false)
   .option("--d1-local", "--harness のとき、wrangler の手元のD1（--local）を使う", false)
-  .option("--route <route>", "auto（API トークンがあれば api。無ければ止まる）、api、browser（管理画面から取得。利用者の了解を得てから）", "auto")
+  .option("--route <route>", "auto（API トークンがあれば api。無ければ止まる）、api、browser、hybrid（公式API＋管理画面の設定。管理画面の利用は了解を得てから）", "auto")
   .option("--yes", "計画を作ったあと、確認なしで投入まで進める", false)
   .option("--allow-partial", "移せないもの・取れないものがあっても、移せる範囲だけ投入する", false)
   .option("--login-timeout <minutes>", "ログインを待つ時間（分）", "15")
   .action(async options => {
-    if (!["auto", "api", "browser"].includes(options.route)) throw new Error("取得方法は auto・api・browser から選んでください");
+    if (!["auto", "api", "browser", "hybrid"].includes(options.route)) throw new Error("取得方法は auto・api・browser・hybrid から選んでください");
     const minutes = Number(options.loginTimeout);
     if (!Number.isFinite(minutes) || minutes <= 0 || minutes > 120) throw new Error("--login-timeout は 1〜120 分で指定してください");
     const mode = targetMode(options);
@@ -155,13 +155,13 @@ program.command("doctor").requiredOption("--account-id <id>", "移行元の識�
     console.log("公式APIの閲覧権限を確認しました（アカウント一致・全件取得の確認は別途必要）。");
   });
 
-program.command("extract").requiredOption("--route <route>", "api または browser")
+program.command("extract").requiredOption("--route <route>", "api または browser（hybrid は migrate --route hybrid を使用）")
   .requiredOption("--account-id <id>", "確認済みの移行元識別ラベル")
   .requiredOption("--output <directory>", "新規スナップショット保存先")
   .option("--file <file>", "画面取得JSON（--route browser のとき必須）")
   .option("--form-ids <ids>", "公式APIで回答を取得するフォームID（カンマ区切り）")
   .action(async options => {
-    if (!["api", "browser"].includes(options.route)) throw new Error("--routeはapiまたはbrowserです");
+    if (!["api", "browser"].includes(options.route)) throw new Error("extract の --route は api または browser です。hybrid は migrate --route hybrid を使ってください");
     if (options.route === "browser" && !options.file) throw new Error("--route browserには--fileで画面取得JSONを指定してください");
     const source = options.route === "api"
       ? await new LstepApiSource({

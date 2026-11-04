@@ -181,6 +181,49 @@ async function runExporter(overrides: Record<string, unknown> = {}, missingUid =
 }
 
 describe("in-browser read-only exporter", () => {
+  it("supplements settings and scenario states without UID, field values, tags or messages per friend", async () => {
+    const { output, calls } = await runExporter({ supplement: true, visibleFriendIds: [12], identityFriendId: 12 }, true);
+    expect(output.mode).toBe("supplement");
+    expect(output.identity).toEqual({ memberId: 12, visibleFriendIds: [12] });
+    expect(output.data.friends).toEqual([{ id: 12, scenarios: [{ id: 3, name: "移行案内", status: "following", started_at: "" }] }]);
+    expect(calls.filter(call => /\/api\/member\/\d+\/data/.test(call.path))).toHaveLength(1);
+    expect(calls.some(call => call.path.includes("/api/member/var/") || call.path.includes("timeline"))).toBe(false);
+    expect(output.data.templates[0].content).toBe("こんにちは🌸");
+    expect(output.data.forms).toHaveLength(1);
+    expect(output.coverage.friendScenarios.status).toBe("complete");
+    expect(output.coverage.friends).toBeUndefined();
+  });
+
+  it("rejects an account proof mismatch before reading any settings", async () => {
+    await expect(runExporter({ supplement: true, visibleFriendIds: [12], identityFriendId: 12 }, true, {
+      "/api/member/12/data": { id: 99 },
+    })).rejects.toThrow("管理番号が一致しません");
+    await expect(runExporter({ supplement: true, visibleFriendIds: [99], identityFriendId: 99 }, true)).rejects.toThrow("照合が必要");
+  });
+
+  it("marks capped or undecodable scenario supplements partial instead of pretending all friends were read", async () => {
+    const { output } = await runExporter({ supplement: true, friendIds: [12, 13], visibleFriendIds: [12], identityFriendId: 12, maxFriends: 1 }, true);
+    expect(output.data.friends.map((value: { id: number }) => value.id)).toEqual([12]);
+    expect(output.coverage.friendScenarios.status).toBe("partial");
+    const result = await runExporter({ supplement: true, visibleFriendIds: [12], identityFriendId: 12 }, true, {
+      "/api/v1/members/12/scenario-status": { reading_scenario: { id: 3 }, next_scenario: null, previous_scenario: null, past_scenarios: [] },
+    });
+    expect(result.output.data.friends).toEqual([]);
+    expect(result.output.coverage.friendScenarios.status).toBe("partial");
+  });
+
+  it("does not import Flex descriptions or image templates as successful text bodies", async () => {
+    const { output } = await runExporter({}, false, { "/api/templates?page=1": page([
+      { id: 4, name: "文章", form_type: 8, content_text: "文字本文" },
+      { id: 5, name: "Flex", form_type: 60, content_text: "これはFlexの説明です" },
+      { id: 6, name: "画像", form_type: 40, content_text: "画像の説明です" },
+    ]) });
+    expect(output.data.templates.map((value: { type: string; content: string }) => ({ type: value.type, content: value.content }))).toEqual([
+      { type: "text", content: "文字本文" }, { type: "unsupported", content: "" }, { type: "unsupported", content: "" },
+    ]);
+    expect(output.coverage.templates.status).toBe("partial");
+  });
+
   it("returns only allowlisted data without saving a file and follows all conversation pages", async () => {
     const { output, calls, waits, downloads } = await runExporter();
     expect(calls.every(call => call.options.method === "GET")).toBe(true);
@@ -266,6 +309,23 @@ describe("in-browser read-only exporter", () => {
     const normal = await runExporter({ download: false });
     expect(normal.output.data.scenarios[0].incomplete).toBeUndefined();
     expect(normal.output.data.forms[0].incomplete).toBeUndefined();
+  });
+
+  it("warns that native delivery modes and times are unverified while preserving readable bodies and steps", async () => {
+    const { output } = await runExporter({}, false, {
+      "/api/content-groups/3": { content_group: { date_diff: 0, contents: [
+        { id: 30, is_initial: true, egg: { form_type: 8, simple: "最初の本文" } },
+        { id: 31, is_initial: false, step: 1, time: "09:00:00", egg: { form_type: 8, simple: "次の本文" } },
+      ] } },
+    });
+    expect(output.coverage.scenarios.status).toBe("partial");
+    expect(output.coverage.scenarios.note).toContain("配信方式・日時（時刻指定・経過時間を含む）の再現は未検証");
+    expect(output.coverage.scenarios.note).toContain("移行後に配信設定の確認・再設定が必要");
+    const imported = importBrowserExport(output);
+    expect(imported.coverage.scenarios.status).toBe("partial");
+    expect(imported.resources.scenarios[0].incomplete).toBeUndefined();
+    expect(imported.resources.scenarios[0].steps.map(step => [step.id, step.templates[0].content]))
+      .toEqual([[30, "最初の本文"], [31, "次の本文"]]);
   });
 
   it("normalizes native string form IDs, TipTap titles, native enum values and nested scenarios", async () => {

@@ -58,7 +58,7 @@ export function hash(value: string): string {
 }
 
 function assertSource(source: SourceExport): void {
-  if (source.schemaVersion !== 1 || source.platform !== "lstep" || !["api", "browser"].includes(source.route)
+  if (source.schemaVersion !== 1 || source.platform !== "lstep" || !["api", "browser", "hybrid"].includes(source.route)
     || !source.account.id.trim() || !Object.keys(source.coverage).length) {
     throw new Error("Lステップの取得結果または取得範囲が不正です");
   }
@@ -95,7 +95,7 @@ export function writeSourceSnapshot(source: SourceExport, destination: string): 
       version: 1, platform: "lstep", route: source.route,
       bot: { id: source.account.id, view_name: source.account.label },
       started_at: source.exportedAt, finished_at: source.exportedAt,
-      sources: { api: source.route === "api", mcp: false, browser: source.route === "browser" },
+      sources: { api: source.route === "api" || source.route === "hybrid", mcp: false, browser: source.route === "browser" || source.route === "hybrid" },
       friend_total: source.resources.friends.length,
       notes: Object.entries(source.coverage).filter(([, entry]) => entry.status !== "complete")
         .map(([name, entry]) => `${name}: ${entry.status} ${entry.note ?? ""}`),

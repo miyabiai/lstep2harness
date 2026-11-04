@@ -68,6 +68,38 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("login browser", () => {
+  it("uses numeric API IDs for supplements without UID probes, DOM tag visits or browser secrets", async () => {
+    const exported = { format: "lstep-browser-v1", mode: "supplement", data: { friends: [] } };
+    const browser = await session({ exported, uidProbe: { checked: true, uidMissing: true } });
+    expect(await browser.adapter.supplement!({ accountId: "account" }, [12, 13])).toEqual(exported);
+    expect(browser.visited).toEqual(["https://manager.linestep.net", "https://manager.linestep.net/line/show?page=1"]);
+    const options = browser.scripts.find(script => script.startsWith("globalThis.LSTEP_EXPORT_OPTIONS"))!;
+    expect(options).toContain('"friendIds":[12,13]');
+    expect(options).toContain('"visibleFriendIds":[12]');
+    expect(options).not.toContain(uid);
+    expect(options).not.toContain("token");
+    expect(browser.scripts.some(script => script.includes("LSTEP_UID_PROBE"))).toBe(false);
+    expect(browser.scripts.some(script => script.includes("#tag_edit #tag_edit_form"))).toBe(false);
+    expect(browser.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses to supplement from another account before reading internal APIs", async () => {
+    const browser = await session({ pages: [{ friendIds: [99], nextPages: [], paginationObserved: true }] });
+    await expect(browser.adapter.supplement!({ accountId: "account" }, [12])).rejects.toThrow("同じアカウント");
+    expect(browser.scripts.some(script => script.startsWith("globalThis.LSTEP_EXPORT_OPTIONS"))).toBe(false);
+    expect(browser.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes the supplement browser on cancellation", async () => {
+    const controller = new AbortController();
+    const browser = await session({ hangExport: true }, { signal: controller.signal });
+    const extracting = browser.adapter.supplement!({ accountId: "account" }, [12]);
+    await vi.waitFor(() => expect(browser.scripts.some(script => script.includes('const options = globalThis.LSTEP_EXPORT_OPTIONS'))).toBe(true));
+    controller.abort();
+    await expect(extracting).rejects.toThrow("中止");
+    expect(browser.close).toHaveBeenCalledTimes(1);
+  });
+
   it("opens a dedicated login flow and returns sanitized data without downloads, files or console paste", async () => {
     const browser = await session();
     expect(await browser.adapter.status()).toEqual({ state: "ready" });

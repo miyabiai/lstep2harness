@@ -120,6 +120,88 @@ describe("collectAndPlan", () => {
     await expect(collectAndPlan(options, { createBrowser: vi.fn(), sleep: noWait })).rejects.toThrow("LSTEP_API_TOKEN");
   });
 
+  it("requires an API token before starting the hybrid route", async () => {
+    const { options } = prepare({ route: "hybrid" });
+    const createApiSource = vi.fn();
+    const createBrowser = vi.fn();
+    await expect(collectAndPlan(options, { createApiSource, createBrowser, sleep: noWait })).rejects.toThrow("LSTEP_API_TOKEN");
+    expect(createApiSource).not.toHaveBeenCalled();
+    expect(createBrowser).not.toHaveBeenCalled();
+  });
+
+  it("does not open a hybrid browser if official API authentication or extraction fails", async () => {
+    for (const failure of ["doctor", "extract"] as const) {
+      const { options } = prepare({ route: "hybrid", apiToken: "fictional-token" });
+      const api = {
+        doctor: vi.fn(async () => { if (failure === "doctor") throw new LstepApiError("denied", 403); }),
+        extract: vi.fn(async () => { throw new Error("API extraction failed"); }),
+      };
+      const createBrowser = vi.fn();
+      await expect(collectAndPlan(options, { createApiSource: () => api, createBrowser, sleep: noWait })).rejects.toThrow();
+      expect(createBrowser).not.toHaveBeenCalled();
+      if (failure === "doctor") expect(api.extract).not.toHaveBeenCalled();
+    }
+  });
+
+  it("passes only official numeric friend IDs to supplementation after collecting the API, and closes on failure", async () => {
+    const { options } = prepare({ route: "hybrid", apiToken: "fictional-secret-token" });
+    const calls: string[] = [];
+    const apiSource = source("api");
+    const api = {
+      doctor: vi.fn(async () => { calls.push("doctor"); }),
+      extract: vi.fn(async () => { calls.push("api-extract"); return apiSource; }),
+    };
+    const browser = fakeBrowser(["login-required", "ready"]);
+    const supplement = vi.fn(async () => { calls.push("supplement"); throw new Error("supplement failed"); });
+    browser.supplement = supplement;
+    const createBrowser = vi.fn(async () => { calls.push("browser"); return browser; });
+    await expect(collectAndPlan(options, { createApiSource: () => api, createBrowser, sleep: noWait })).rejects.toThrow("supplement failed");
+    expect(calls).toEqual(["doctor", "api-extract", "browser", "supplement"]);
+    expect(supplement).toHaveBeenCalledWith({ accountId: "lstep" }, [1001, 1002]);
+    const argumentsPassed = JSON.stringify(supplement.mock.calls);
+    expect(argumentsPassed).not.toContain(options.apiToken);
+    for (const friend of apiSource.resources.friends) expect(argumentsPassed).not.toContain(friend.row.line_friend_id);
+    expect(browser.extract).not.toHaveBeenCalled();
+    expect(browser.close).toHaveBeenCalledTimes(1);
+    expect(existsSync(options.dataRoot)).toBe(false);
+  });
+
+  it("creates a hybrid plan with both sources recorded after successful supplementation", async () => {
+    const { options } = prepare({ route: "hybrid", apiToken: "fictional-token" });
+    const apiSource = source("api");
+    apiSource.account.id = "lstep";
+    const raw = JSON.parse(readFileSync(new URL("fixtures/lstep-browser.json", import.meta.url), "utf8"));
+    raw.mode = "supplement";
+    raw.account.id = "lstep";
+    raw.identity = { memberId: 1001, visibleFriendIds: [1001, 1002] };
+    raw.data.friends = raw.data.friends.map((friend: { id: number; scenarios: unknown[] }) => ({ id: friend.id, scenarios: friend.scenarios }));
+    const browser = fakeBrowser(["ready"]);
+    browser.supplement = vi.fn(async () => raw);
+    const summary = await collectAndPlan(options, {
+      createApiSource: () => ({ doctor: async () => {}, extract: async () => apiSource }),
+      createBrowser: async () => browser, sleep: noWait,
+    });
+    expect(summary.route).toBe("hybrid");
+    expect(summary.counts.friends).toBe(2);
+    expect(summary.counts.templates).toBe(2);
+    const snapshot = join(summary.runDirectory, "snapshot");
+    expect(JSON.parse(readFileSync(join(snapshot, "source.json"), "utf8")).route).toBe("hybrid");
+    expect(JSON.parse(readFileSync(join(snapshot, "meta.json"), "utf8")).sources).toEqual({ api: true, browser: true, mcp: false });
+    expect(browser.extract).not.toHaveBeenCalled();
+    expect(browser.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops when a browser cannot supplement instead of falling back to its full export", async () => {
+    const { options } = prepare({ route: "hybrid", apiToken: "fictional-token" });
+    const browser = fakeBrowser(["ready"]);
+    await expect(collectAndPlan(options, {
+      createApiSource: () => ({ doctor: async () => {}, extract: async () => source("api") }),
+      createBrowser: async () => browser, sleep: noWait,
+    })).rejects.toThrow("設定補完に対応していません");
+    expect(browser.extract).not.toHaveBeenCalled();
+    expect(browser.close).toHaveBeenCalledTimes(1);
+  });
+
   it("checks the target before opening a browser", async () => {
     const { options, dbPath } = prepare();
     const database = new LocalD1(dbPath);

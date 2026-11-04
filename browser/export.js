@@ -142,6 +142,25 @@
     if (!Object.keys(result).length && Object.keys(object(value)).length) return { unsupported: true };
     return result;
   };
+  if (options.supplement === true) {
+    if (!Array.isArray(options.friendIds) || !options.friendIds.length
+      || new Set(options.friendIds).size !== options.friendIds.length
+      || !Array.isArray(options.visibleFriendIds) || !options.visibleFriendIds.length
+      || new Set(options.visibleFriendIds).size !== options.visibleFriendIds.length
+      || options.visibleFriendIds.some(value => !id(value) || !options.friendIds.includes(value))
+      || !options.visibleFriendIds.includes(options.identityFriendId)) {
+      throw new Error("公式APIと管理画面の友だちの照合が必要です");
+    }
+    const source = unwrap(await read(`/api/member/${options.identityFriendId}/data`));
+    if (id(source.id) !== options.identityFriendId) throw new Error("管理画面の応答の管理番号が一致しません");
+    output.mode = "supplement";
+    output.identity = { memberId: options.identityFriendId, visibleFriendIds: [...options.visibleFriendIds] };
+    // 画面側にUIDが返る版だけNodeで追加照合する。公式トークンやUIDを画面へ渡す必要はない。
+    if (source.uid !== undefined && source.uid !== null && source.uid !== "") {
+      if (typeof source.uid !== "string") throw new Error("管理画面のLINEユーザーIDの形式を確認できません");
+      output.identity.uid = source.uid;
+    }
+  }
   const tag = source => ({ id: id(source.id), name: text(source.name), friend_count: integer(source.member_count ?? source.friend_count ?? source.count) });
   output.data.tags = await list("/api/tags", "tags", tag);
   output.data.fields = await list("/api/user-vars", "fields", source => ({
@@ -153,8 +172,10 @@
   if (output.data.fields.some(field => field.type === "SELECT" && !field.options.length)) downgrade("fields", "選択式の友だち情報欄は選択肢が未取得");
   output.data.templates = await list("/api/templates", "templates", source => {
     const content = text(source.content_text);
-    if (!content) downgrade("templates", "本文がないか文字以外のテンプレートがあります");
-    return { id: id(source.id), name: text(source.name), type: content ? "text" : "unsupported", content };
+    // Flex等にもcontent_text（説明文）がある。明示された種類が8以外なら文字本文として扱わない。
+    const supported = source.form_type === undefined || Number(source.form_type) === 8;
+    if (!content || !supported) downgrade("templates", "本文がないか文字以外のテンプレートがあります");
+    return { id: id(source.id), name: text(source.name), type: content && supported ? "text" : "unsupported", content: supported ? content : "" };
   });
   const actionCache = new Map();
   const getActions = async source => {
@@ -181,6 +202,9 @@
     try {
       const response = unwrap(await read(`/api/content-groups/${item.id}`));
       const detail = response.content_group ? object(response.content_group) : response;
+      if (Object.hasOwn(detail, "date_diff")) {
+        downgrade("scenarios", "配信方式・日時（時刻指定・経過時間を含む）の再現は未検証です。本文・ステップは停止状態で取り込み、移行後に配信設定の確認・再設定が必要です");
+      }
       const steps = Array.isArray(detail.contents) ? detail.contents : Array.isArray(detail.steps) ? detail.steps : null;
       if (!steps) { downgrade("scenarios", "ステップ一覧の形式が未確認"); scenario.incomplete = true; }
       for (const [index, value] of array(steps).entries()) {
@@ -306,6 +330,42 @@
     Object.values(output.data.formResponses).reduce((sum, values) => sum + values.length, 0),
     answerCoverage.every(item => item.status === "complete") ? undefined : "未取得・未対応の回答があります");
   downgrade("formBehavior", "設問ごとの保存先・条件分岐・回答後動作の移行は要確認");
+  const readScenarios = async memberId => {
+    const status = unwrap(await read(`/api/v1/members/${memberId}/scenario-status`));
+    if (Array.isArray(status.scenarios)) {
+      const values = status.scenarios.map(object);
+      if (values.some(value => !id(value.id)) || new Set(values.map(value => id(value.id))).size !== values.length) {
+        downgrade("friendScenarios", "購読シナリオの管理番号が不正または重複しています");
+        return null;
+      }
+      return values.map(state => ({ id: id(state.id), name: text(state.name), status: text(state.status), started_at: text(state.started_at) }));
+    }
+    const keys = ["reading_scenario", "next_scenario", "previous_scenario", "past_scenarios"];
+    const empty = value => value === null || value === "" || Array.isArray(value) && value.length === 0
+      || value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0;
+    if (keys.every(key => Object.hasOwn(status, key) && empty(status[key]))) return [];
+    downgrade("friendScenarios", "空ではない購読状況の構造が未確認");
+    return null;
+  };
+  if (options.supplement === true) {
+    note("friendScenarios", "complete", 0);
+    for (const memberId of options.friendIds.slice(0, maxFriends)) {
+      try {
+        const scenarios = await readScenarios(memberId);
+        if (scenarios !== null) {
+          output.data.friends.push({ id: memberId, scenarios });
+          coverage.friendScenarios.count += scenarios.length;
+        }
+      } catch { downgrade("friendScenarios", "購読状況を取得できませんでした"); }
+      if (globalThis.LSTEP_EXPORT_CANCEL || requests >= maxRequests) break;
+    }
+    if (output.data.friends.length !== options.friendIds.length) {
+      downgrade("friendScenarios", "上限・未対応・中断により購読状況を補完できない友だちがあります。公式APIの友だちは保持します");
+    }
+    globalThis.LSTEP_LAST_EXPORT = output;
+    console.info("Lステップ設定補完終了", { friends: output.data.friends.length, requests, coverage });
+    return output;
+  }
   const memberIds = [];
   const seenMembers = new Set();
   if (Array.isArray(options.friendIds)) {
@@ -388,19 +448,7 @@
     coverage.friendTags.count += friend.tags.length;
     coverage.friendFields.count += friend.fields.length;
     try {
-      const status = unwrap(await read(`/api/v1/members/${memberId}/scenario-status`));
-      if (Array.isArray(status.scenarios)) {
-        friend.scenarios = status.scenarios.map(object).filter(value => id(value.id)).map(state => ({
-          id: id(state.id), name: text(state.name), status: text(state.status), started_at: text(state.started_at),
-        }));
-      } else {
-        const keys = ["reading_scenario", "next_scenario", "previous_scenario", "past_scenarios"];
-        const empty = value => value === null || value === "" || Array.isArray(value) && value.length === 0
-          || value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0;
-        if (!keys.every(key => Object.hasOwn(status, key) && empty(status[key]))) {
-          downgrade("friendScenarios", "空ではない購読状況の構造が未確認");
-        }
-      }
+      friend.scenarios = await readScenarios(memberId) ?? [];
     } catch { downgrade("friendScenarios", "購読状況を取得できませんでした"); }
     coverage.friendScenarios.count += friend.scenarios.length;
     const messageIds = new Set();
