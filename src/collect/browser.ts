@@ -4,6 +4,9 @@ import type { ResourceCoverage, SourceExport } from "../lstep/export.js";
 
 const origin = "https://manager.linestep.net";
 
+/** 2026-11-04 に確認した Lステップの仕様変更。案内とエラーで同じ文を使う */
+export const BROWSER_UID_UNAVAILABLE = "2026年11月4日時点、Lステップの仕様変更で管理画面の応答に友だちの LINE ユーザーID が含まれないため、管理画面からは移行できません。";
+
 export interface LoginBrowserPage {
   goto(url: string): Promise<unknown>;
   evaluate<Result>(script: string): Promise<Result>;
@@ -100,6 +103,23 @@ const friendTagsScript = `(() => {
   }
   result.observed = true;
   return result;
+})()`;
+
+// 全員の詳細を読む前に、LINE ユーザーIDの項目があるかを1人で確かめる（読み取りだけ）。
+// グループなど形の違う値は「項目が無い」と扱わず、これまでの取得の確認に任せる
+const uidProbeScript = (memberId: number): string => `(async () => { /* LSTEP_UID_PROBE */
+  try {
+    const csrf = document.querySelector('meta[name="csrf-token"]')?.content;
+    const response = await fetch('/api/member/${memberId}/data', {
+      method: 'GET', credentials: 'same-origin', redirect: 'error', cache: 'no-store',
+      headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest', ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}) },
+    });
+    if (!response.ok) return { checked: false };
+    const body = await response.json();
+    const source = body && body.data && !Array.isArray(body.data) ? body.data : body;
+    if (!source || typeof source !== 'object') return { checked: false };
+    return { checked: true, uidMissing: source.uid === undefined || source.uid === null || source.uid === '' };
+  } catch { return { checked: false }; }
 })()`;
 
 function bounded(value: number | undefined, fallback: number, maximum: number): number {
@@ -276,6 +296,14 @@ export async function createLoginBrowserSession(
         // 一覧の制限時間だけでは、数百人の詳細を読む前に打ち切られるため、人数ぶんの時間を足す
         return await execute(async () => {
           const complete = listed;
+          // 確かめられなかったときは止めず、これまでどおり取得して照合に任せる
+          await new Promise(resolve => setTimeout(resolve, Math.max(0, intervalMs - (Date.now() - lastNavigation))));
+          ensureOpen();
+          lastNavigation = Date.now();
+          const probe = await driver.page.evaluate<{ checked?: boolean; uidMissing?: boolean }>(uidProbeScript(discovered[0])).catch(() => undefined);
+          if (probe?.checked === true && probe.uidMissing === true) {
+            throw new Error(`${BROWSER_UID_UNAVAILABLE}公式 API（LSTEP_API_TOKEN）で取得してください`);
+          }
           const tagViews = new Map<number, FriendTagsView>();
           for (const memberId of discovered) {
             await navigate(`/line/detail/${memberId}`);

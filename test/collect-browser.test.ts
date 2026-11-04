@@ -26,6 +26,7 @@ function mockBrowser(settings: {
   tags?: { memberId: number; observed: boolean; definitionIds?: number[]; tags: { id?: number; name: string }[] };
   exported?: unknown;
   hangExport?: boolean;
+  uidProbe?: { checked?: boolean; uidMissing?: boolean };
 } = {}) {
   const visited: string[] = [];
   const scripts: string[] = [];
@@ -36,6 +37,7 @@ function mockBrowser(settings: {
       goto: async url => { visited.push(url); },
       evaluate: async <Result>(script: string): Promise<Result> => {
         scripts.push(script);
+        if (script.includes("LSTEP_UID_PROBE")) return (settings.uidProbe ?? { checked: true, uidMissing: false }) as Result;
         if (script.includes("ready: location.origin")) return { ready: settings.ready !== false } as Result;
         if (script.includes("const friendIds = new Set")) {
           return (settings.pages?.[Math.min(page++, settings.pages.length - 1)] ?? { friendIds: [12], nextPages: [], paginationObserved: true, lastPageObserved: true }) as Result;
@@ -255,6 +257,41 @@ describe("login browser", () => {
     const browser = await session({ exported });
     await expect(browser.adapter.extract({ accountId: "account" })).rejects.toThrow("すべて確認できないため取得を中止");
     expect(browser.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops before reading every friend when the LINE user ID field is gone", async () => {
+    const browser = await session({ uidProbe: { checked: true, uidMissing: true } });
+    await expect(browser.adapter.extract({ accountId: "account" })).rejects.toThrow("2026年11月4日時点");
+    expect(browser.visited).not.toContain("https://manager.linestep.net/line/detail/12");
+    expect(browser.scripts.some(script => script.includes("const options = globalThis.LSTEP_EXPORT_OPTIONS"))).toBe(false);
+    expect(browser.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the normal extraction when the field check cannot decide", async () => {
+    const browser = await session({ uidProbe: { checked: false } });
+    const result = await browser.adapter.extract({ accountId: "account" });
+    expect(result.resources.friends[0].row.line_friend_id).toBe(uid);
+  });
+
+  it.each([
+    ["the field is absent", { status: 200, body: { id: 12, name: "テスト" } }, { checked: true, uidMissing: true }],
+    ["the field is empty", { status: 200, body: { data: { id: 12, uid: "" } } }, { checked: true, uidMissing: true }],
+    ["a LINE user ID is returned", { status: 200, body: { id: 12, uid } }, { checked: true, uidMissing: false }],
+    ["a group ID is returned", { status: 200, body: { id: 12, uid: `C${"a".repeat(32)}` } }, { checked: true, uidMissing: false }],
+    ["the request fails", { status: 500, body: {} }, { checked: false }],
+  ])("reads the real field check script when %s", async (_label, reply, expected) => {
+    const browser = await session();
+    await browser.adapter.extract({ accountId: "account" });
+    const script = browser.scripts.find(value => value.includes("LSTEP_UID_PROBE"))!;
+    const paths: string[] = [];
+    const fetch = async (path: string) => {
+      paths.push(path);
+      return { ok: reply.status < 400, json: async () => reply.body };
+    };
+    const document = { querySelector: () => ({ content: "synthetic-csrf" }) };
+    const result = await runInNewContext(script, { fetch, document });
+    expect(JSON.parse(JSON.stringify(result))).toEqual(expected);
+    expect(paths).toEqual(["/api/member/12/data"]);
   });
 
   it("rejects a returned friend without a valid LINE user ID", async () => {

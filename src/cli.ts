@@ -7,7 +7,7 @@ import { importBrowserExport } from "./lstep/browser.js";
 import { shellQuote } from "./util.js";
 import { TUTORIAL_CHAPTERS, tutorialMessage, tutorialUrl, type TutorialChapter } from "./guide.js";
 
-const program = new Command().name("lstep2harness").version("0.1.0")
+const program = new Command().name("lstep2harness").version("0.1.1")
   .description("Lステップのデータを L Harness へ移行します。投入は確認のあとだけ行い、移したシナリオ・自動応答・フォームは停止のまま入れます。");
 
 program.command("guide [chapter]")

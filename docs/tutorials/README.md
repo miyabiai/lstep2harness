@@ -13,7 +13,7 @@
 | [Cloudflare R2 の有効化](index.html#cloudflare-r2) | 画像保存先の準備 | メニューを開き、有効化済み画面を確認。支払情報の入力・有効化の最終操作は未収録 | [MP4](videos/05-cloudflare-r2.mp4) |
 | [Cloudflare の接続許可・API トークン](index.html#cloudflare-api-token) | ツールの接続準備 | カスタムトークンの権限 5 項目・対象の下書きと確認画面。最終発行・値の表示・通常の接続許可は含まない | [MP4](videos/06-cloudflare-api-token.mp4) |
 | [接続情報をファイルへ保存](index.html#save-credentials) | 値の貼り付けを求められた場合 | 空欄の見本への貼り付け・保存の実演。値は説明用の伏せ字で、実際の秘密値の編集は画面に表示しない | 収録・確認中 |
-| [Lステップのログイン・取得元の確認](index.html#lstep-login) | 管理画面からの取得 | ログイン済み画面の上部で取得元を確認する操作だけ。ログイン情報の入力・認証・取得専用 Chrome のウィンドウは未収録 | [MP4](videos/08-lstep-login.mp4) |
+| [Lステップのログイン・取得元の確認](index.html#lstep-login) | 管理画面からの取得（2026年11月4日時点で使えません） | ログイン済み画面の上部で取得元を確認する操作だけ。ログイン情報の入力・認証・取得専用 Chrome のウィンドウは未収録 | [MP4](videos/08-lstep-login.mp4) |
 | [移行後の管理画面を確認](index.html#migration-review) | 投入・照合の完了後 | 管理画面へ API キーでログインし、移行後の画面を確認する実演。投入前の承認や全機能の動作試験は対象外 | [MP4](videos/09-migration-review.mp4) |
 
 L Harness をすでに使っている場合、LINE 接続情報の取得・LIFF の新規作成・Cloudflare の登録をやり直す必要はありません。移行先は、Lステップと同じ LINE 公式アカウントであることを確認してください。

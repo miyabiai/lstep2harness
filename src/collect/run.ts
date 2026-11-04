@@ -7,7 +7,7 @@ import type { PlanManifest } from "../mapping/plan.js";
 import { createPlan, writeSourceSnapshot, type PlanTarget } from "../pipeline.js";
 import type { HarnessDatabase } from "../harness/database.js";
 import { HarnessCheckError, inspectHarness, readPlanTarget, type HarnessAccount } from "../harness/remote.js";
-import { createLoginBrowserSession, type LoginBrowserSession } from "./browser.js";
+import { BROWSER_UID_UNAVAILABLE, createLoginBrowserSession, type LoginBrowserSession } from "./browser.js";
 import { tutorialMessage } from "../guide.js";
 
 /**
@@ -104,9 +104,9 @@ async function collectWithApi(options: CollectOptions, dependencies: CollectDepe
     await api.doctor();
   } catch (error) {
     if (error instanceof LstepApiError && [401, 403].includes(error.status ?? 0)) {
-      throw new CollectError("LステップAPIの認証または閲覧権限を確認してください（トークンが使えませんでした）。管理画面から取る場合は --route browser で実行してください。");
+      throw new CollectError(`LステップAPIの認証または閲覧権限を確認してください（トークンが使えませんでした）。管理画面から取る場合は --route browser で実行してください。ただし${BROWSER_UID_UNAVAILABLE}`);
     }
-    throw new CollectError("LステップAPIに接続できませんでした。設定を確認するか、管理画面から取る場合は --route browser で実行してください。");
+    throw new CollectError(`LステップAPIに接続できませんでした。設定を確認するか、管理画面から取る場合は --route browser で実行してください。ただし${BROWSER_UID_UNAVAILABLE}`);
   }
   options.log?.("LステップAPIで取得しています（ブラウザは開きません）。");
   return api.extract();
@@ -183,12 +183,13 @@ export async function collectAndPlan(options: CollectOptions, dependencies: Coll
   const account = "harness" in target ? await validateHarnessTarget(target) : (validateTarget(target), null);
   const accountId = options.sourceAccountId?.trim() || "lstep";
   const hasToken = Boolean(options.apiToken?.trim());
-  if (options.route === "api" && !hasToken) throw new CollectError("LSTEP_API_TOKEN が設定されていません。管理画面から取る場合は --route browser で実行してください。");
+  if (options.route === "api" && !hasToken) throw new CollectError(`LSTEP_API_TOKEN が設定されていません。管理画面から取る場合は --route browser で実行してください。ただし${BROWSER_UID_UNAVAILABLE}`);
   if (options.route === "auto" && !hasToken) {
-    throw new CollectError("LSTEP_API_TOKEN が無いので公式 API では取得できません。管理画面から取得する場合は、提供元が公開していない画面内部の読み取り口を使うこと（Lステップの利用規約を確認のうえ自己責任で使うこと）を利用者に伝え、了解を得てから --route browser を付けて実行してください。");
+    throw new CollectError(`LSTEP_API_TOKEN が無いので公式 API では取得できません。管理画面から取得する場合は、提供元が公開していない画面内部の読み取り口を使うこと（Lステップの利用規約を確認のうえ自己責任で使うこと）を利用者に伝え、了解を得てから --route browser を付けて実行してください。ただし${BROWSER_UID_UNAVAILABLE}`);
   }
   const route: "api" | "browser" = options.route === "browser" ? "browser" : "api";
   if (route === "browser") {
+    options.log?.(`${BROWSER_UID_UNAVAILABLE}ログイン後に1人分を確かめ、LINE ユーザーID が無ければ取得を止めます。`);
     options.log?.("管理画面からの取得は、提供元が公開していない画面内部の読み取り口を 1.1 秒以上の間隔で読みます（読み取りだけ）。Lステップの利用規約を確認のうえ、ご自身の責任で使ってください。公式 API（API 連携オプション）がある場合は LSTEP_API_TOKEN を設定すると、そちらを使います。");
   }
   const source = route === "api"
